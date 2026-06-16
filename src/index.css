@@ -1,0 +1,97 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Plus Jakarta Sans", "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --color-gray-55: #f9fafb;
+  --color-gray-105: #f3f4f6;
+  --color-gray-150: #e5e7eb;
+  --color-gray-250: #d1d5db;
+  --color-gray-350: #9ca3af;
+  --color-gray-450: #6b7280;
+  --color-gray-750: #374151;
+  --color-gray-850: #1f2937;
+  --color-gray-955: #0b111e;
+
+  --color-blue-105: #eff6ff;
+  --color-blue-150: #bfdbfe;
+  --color-blue-650: #2563eb;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    font-family: var(--font-sans);
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+  }
+
+  /* Custom Professional Scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(156, 163, 175, 0.35);
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(156, 163, 175, 0.6);
+  }
+  
+  .dark ::-webkit-scrollbar-thumb {
+    background: rgba(75, 85, 99, 0.45);
+  }
+  .dark ::-webkit-scrollbar-thumb:hover {
+    background: rgba(75, 85, 99, 0.7);
+  }
+
+  /* Premium Selection Highlights */
+  ::selection {
+    background-color: rgba(37, 99, 235, 0.15);
+    color: #2563eb;
+  }
+  
+  .dark ::selection {
+    background-color: rgba(37, 99, 235, 0.3);
+    color: #60a5fa;
+  }
+}
+
+/* Custom Interactive Animations */
+@keyframes swing {
+  0% { transform: rotate(0deg); }
+  20% { transform: rotate(10deg); }
+  45% { transform: rotate(-10deg); }
+  65% { transform: rotate(5deg); }
+  85% { transform: rotate(-5deg); }
+  100% { transform: rotate(0deg); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-swing {
+  animation: swing 1s ease-in-out infinite alternate;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}

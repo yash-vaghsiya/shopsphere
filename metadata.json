@@ -1,0 +1,6 @@
+{
+  "name": "ShopSphere",
+  "description": "An interactive, highly performant e-commerce platform with elegant design, Redux State, secure local or backend integrations, and responsive components.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
