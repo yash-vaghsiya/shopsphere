@@ -5,7 +5,6 @@ import { Button } from "../common/Button";
 import { useCart } from "../../hooks/useCart";
 import { formatCurrency } from "../../utils/format";
 import { toast } from "react-hot-toast";
-import { Coupon } from "../../types";
 
 export const CartSummary = () => {
   const { totalAmount } = useCart();

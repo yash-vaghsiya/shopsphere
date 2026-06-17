@@ -9,7 +9,7 @@ export const SUPPORT_PHONE = "+91 9999999999";
 
 export const ROLES = {
   ADMIN: "Admin",
-  CUSTOMER,
+  CUSTOMER: "Customer",
 };
 
 export const ROUTES = {

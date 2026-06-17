@@ -1,6 +1,5 @@
 import React, { useState } from "react";
 import { Star, MessageCircle, PenTool, Award, ThumbsUp } from "lucide-react";
-import { Review } from "../../types";
 import { RatingStars } from "../common/RatingStars";
 import { Button } from "../common/Button";
 import { Input } from "../common/Input";

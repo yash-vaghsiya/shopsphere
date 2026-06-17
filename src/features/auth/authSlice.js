@@ -32,7 +32,7 @@ const initialState = {
   token: initialToken,
   loading: false,
   error: null,
-  isAuthenticated: !!initialToken && !!initialUser,
+  isAuthenticated: !!initialToken,
 };
 
 // Async Thunks
@@ -116,6 +116,12 @@ const authSlice = createSlice({
     },
     clearAuthError: (state) => {
       state.error = null;
+    },
+    setCredentials: (state, action) => {
+      state.user = action.payload.user;
+      state.token = action.payload.token;
+      state.isAuthenticated = true;
+      state.error = null;
     }
   },
   extraReducers: (builder) => {
@@ -167,5 +173,5 @@ const authSlice = createSlice({
   },
 });
 
-export const { logout, clearAuthError } = authSlice.actions;
+export const { logout, clearAuthError, setCredentials } = authSlice.actions;
 export default authSlice.reducer;

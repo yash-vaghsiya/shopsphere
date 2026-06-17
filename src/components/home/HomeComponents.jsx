@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { ArrowRight, Star, Heart, Flame, ShieldAlert, Award, Copy, Check, Tag } from "lucide-react";
-import { Coupon } from "../../types";
 
 // CATEGORIES SECTION
 export const CategorySection = () => {

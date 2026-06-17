@@ -5,7 +5,6 @@ import { fetchProductsThunk, deleteProductThunk } from "../../features/products/
 import { ProductsTable } from "../../components/admin/AdminComponents";
 import { toast } from "react-hot-toast";
 import { X, Save, Sparkles, AlertCircle } from "lucide-react";
-import { Product } from "../../types";
 
 export const AdminProducts = () => {
   const dispatch = useDispatch();

@@ -15,7 +15,7 @@ export const ProfileCard = ({ user }) => {
       {/* Avatar node */}
       <div className="relative">
         <div className="w-24 h-24 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-600 text-white flex items-center justify-center text-3xl font-black shadow-lg">
-          {user.name.charAt(0).toUpperCase()}
+          {user.name ? user.name.charAt(0).toUpperCase() : "?"}
         </div>
         <button className="absolute bottom-0 right-0 p-1.5 bg-white dark:bg-gray-800 rounded-full border border-gray-200 dark:border-gray-700 shadow-md text-gray-500 hover:text-blue-600 transition-colors">
           <Camera size={14} />

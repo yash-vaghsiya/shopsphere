@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { toast } from "react-hot-toast";
 import { Megaphone, Bell, Volume2, Award, CheckCircle, ShieldAlert, X } from "lucide-react";
-import { BroadcastNotification } from "../../types";
 
 export const GlobalBroadcastListener = () => {
   useEffect(() => {

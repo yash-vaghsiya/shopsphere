@@ -21,7 +21,7 @@ import {
   X,
   Sparkles
 } from "lucide-react";
-import { Coupon, Product } from "../../types";
+
 
 export const AdminDiscounts = () => {
   const dispatch = useDispatch();

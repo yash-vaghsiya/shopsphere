@@ -3,7 +3,6 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { CheckCircle, ClipboardCheck, ShoppingBag, Eye, Download, FileText, CheckCircle2, RefreshCw } from "lucide-react";
 import { formatCurrency } from "../../utils/format";
 import { axiosInstance } from "../../services/api";
-import { Order } from "../../types";
 import { downloadInvoicePDF } from "../../utils/invoiceGenerator";
 import { toast } from "react-hot-toast";
 

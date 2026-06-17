@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
 import { UsersTable } from "../../components/admin/AdminComponents";
-import { User } from "../../types";
 import { axiosInstance } from "../../services/api";
 import { toast } from "react-hot-toast";
 

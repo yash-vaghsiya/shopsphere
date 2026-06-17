@@ -1,0 +1,10 @@
+{
+    "configurations": [
+        {
+            "type": "chrome",
+            "name": "http://isAuthenticated",
+            "request": "launch",
+            "url": "http://isAuthenticated"
+        }
+    ]
+}

@@ -1,6 +1,5 @@
 import React from "react";
 import { X, ShoppingCart, Trash2, Scale, ArrowRight, HelpCircle, CheckCircle2 } from "lucide-react";
-import { Product } from "../../types";
 import { useCompare } from "../../context/CompareContext";
 import { useCart } from "../../hooks/useCart";
 import { formatCurrency } from "../../utils/format";

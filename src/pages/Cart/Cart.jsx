@@ -19,7 +19,6 @@ import {
 import { toast } from "react-hot-toast";
 import { axiosInstance } from "../../services/api";
 import { OrderStatusTracker } from "../../components/orders/OrderStatusTracker";
-import { Order } from "../../types";
 import { useAuth } from "../../hooks/useAuth";
 import { formatCurrency, formatDate } from "../../utils/format";
 import { Input } from "../../components/common/Input";

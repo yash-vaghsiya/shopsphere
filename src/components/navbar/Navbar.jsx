@@ -12,7 +12,6 @@ import { useWishlist } from "../../hooks/useWishlist";
 import { useTheme } from "../../hooks/useTheme";
 import { useDispatch, useSelector } from "react-redux";
 import { SUPPORTED_CURRENCIES, setCurrency } from "../../features/currency/currencySlice";
-import { BroadcastNotification } from "../../types";
 
 
 const CURRENCY_DETAILS = {
@@ -401,15 +400,15 @@ export const Navbar = () => {
                   <div className="w-8.5 h-8.5 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center text-[11px] font-black shadow-sm ring-2 ring-transparent group-hover:ring-blue-500/30 transition-all shrink-0">
                     {user?.name ? user.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2) : "ME"}
                   </div>
-                  <div className="hidden lg:flex flex-col items-start text-left leading-tight shrink-0 max-w-[90px]">
+                  <div className="flex flex-col items-start text-left leading-tight shrink-0 max-w-[90px]">
                     <span className="text-[11px] font-black truncate w-full group-hover:text-blue-500 transition-colors">
                       {user?.name}
                     </span>
-                    <span className="text-[9px] font-bold text-gray-400 dark:text-gray-500 block truncate leading-none uppercase">
+                    <span className="text-[9px] font-bold text-gray-400 dark:text-gray-500 block truncate leading-none uppercase hidden sm:block">
                       {user?.role === "Admin" ? "Store Admin" : "Buyer Hub"}
                     </span>
                   </div>
-                  <ChevronDown size={11} className={`text-gray-400 transition-transform duration-200 ${showProfile ? "rotate-180 text-blue-500" : ""}`} />
+                  <ChevronDown size={11} className={`hidden lg:block text-gray-400 transition-transform duration-200 ${showProfile ? "rotate-180 text-blue-500" : ""}`} />
                 </button>
 
                 <AnimatePresence>

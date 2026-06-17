@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Mail, Search, Trash2, Copy, Download, Calendar, ArrowUpRight, CheckCircle } from "lucide-react";
 import { axiosInstance } from "../../services/api";
-import { NewsletterSubscriber } from "../../types";
 import { toast } from "react-hot-toast";
 import { formatDate } from "../../utils/format";
 

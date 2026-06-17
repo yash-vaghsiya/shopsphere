@@ -342,6 +342,19 @@ app.post('/api/orders', (req, res) => {
   res.status(201).json(newOrder);
 });
 
+app.patch('/api/orders/:id', (req, res) => {
+  const orderId = Number(req.params.id);
+  const order = orders.find((item) => item.id === orderId);
+  if (!order) {
+    return res.status(404).json({ message: 'Order not found' });
+  }
+  const updates = req.body || {};
+  if (updates.status) order.status = updates.status;
+  if (updates.customerName) order.customerName = updates.customerName;
+  if (updates.shippingAddress) order.shippingAddress = updates.shippingAddress;
+  res.json(order);
+});
+
 app.patch('/api/products/:id/discount', (req, res) => {
   const productId = Number(req.params.id);
   const product = products.find((item) => item.id === productId);
@@ -369,7 +382,49 @@ app.delete('/api/products/:id', (req, res) => {
   res.json({ message: 'Product removed successfully' });
 });
 
+// Newsletter subscribers (in-memory)
+const subscribers = [];
+
+// Contact queries (in-memory)
+const contactQueries = [];
+
+// In-memory user store for mock auth
+const users = [];
+
 // Mock auth endpoints
+app.get('/api/auth/me', (req, res) => {
+  const { email, role, userId } = getUserFromHeader(req);
+  if (!email && !userId) {
+    return res.status(401).json({ message: 'Not authenticated' });
+  }
+  // Look up user in users array, or return a mock user
+  let user = users.find(u => u.email === email || String(u.id) === String(userId));
+  if (!user) {
+    user = { id: userId || Date.now(), name: 'Demo User', email: email || 'guest@shopsphere.com', role: role || 'Customer' };
+  }
+  res.json({ user });
+});
+
+app.patch('/api/auth/me', (req, res) => {
+  const { email, userId } = getUserFromHeader(req);
+  if (!email && !userId) {
+    return res.status(401).json({ message: 'Not authenticated' });
+  }
+  const updates = req.body || {};
+  let user = users.find(u => u.email === email || String(u.id) === String(userId));
+  if (!user) {
+    user = { id: userId || Date.now(), email, role: 'Customer' };
+    users.push(user);
+  }
+  if (updates.name) user.name = updates.name;
+  if (updates.phone) user.phone = updates.phone;
+  if (updates.address) user.address = updates.address;
+  if (updates.city) user.city = updates.city;
+  if (updates.state) user.state = updates.state;
+  if (updates.zipCode) user.zipCode = updates.zipCode;
+  res.json({ user });
+});
+
 app.post('/api/auth/register', (req, res) => {
   const { name, email, password } = req.body || {};
   if (!name || !email || !password) {
@@ -378,6 +433,13 @@ app.post('/api/auth/register', (req, res) => {
   const id = Date.now();
   const isAdmin = String(email).toLowerCase().includes("admin");
   const user = { id, name, email, role: isAdmin ? 'Admin' : 'Customer' };
+  // Persist user for profile lookups
+  const existingIndex = users.findIndex(u => u.email === email);
+  if (existingIndex >= 0) {
+    users[existingIndex] = user;
+  } else {
+    users.push(user);
+  }
   const token = `mock-token-${id}`;
   return res.status(201).json({ user, token });
 });
@@ -390,8 +452,120 @@ app.post('/api/auth/login', (req, res) => {
   const id = Date.now();
   const isAdmin = String(email).toLowerCase().includes("admin");
   const user = { id, name: 'Demo User', email, role: isAdmin ? 'Admin' : 'Customer' };
+  // Persist user for profile lookups
+  const existingIndex = users.findIndex(u => u.email === email);
+  if (existingIndex >= 0) {
+    users[existingIndex] = user;
+  } else {
+    users.push(user);
+  }
   const token = `mock-token-${id}`;
   return res.json({ user, token });
+});
+
+// Newsletter endpoints
+app.post('/api/newsletter/subscribe', (req, res) => {
+  const { email } = req.body || {};
+  if (!email) {
+    return res.status(400).json({ message: 'Email is required' });
+  }
+  const exists = subscribers.some(s => s.email === email);
+  if (exists) {
+    return res.status(400).json({ message: 'Email is already subscribed' });
+  }
+  subscribers.push({ id: Date.now(), email, subscribedAt: new Date().toISOString() });
+  res.status(201).json({ message: 'Subscribed successfully! Welcome to ShopSphere updates.' });
+});
+
+app.get('/api/newsletter/subscribers', (req, res) => {
+  res.json(subscribers);
+});
+
+app.delete('/api/newsletter/subscribers/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const index = subscribers.findIndex(s => s.id === id);
+  if (index === -1) {
+    return res.status(404).json({ message: 'Subscriber not found' });
+  }
+  subscribers.splice(index, 1);
+  res.json({ message: 'Subscriber removed' });
+});
+
+// Contact queries endpoints
+app.post('/api/contact/queries', (req, res) => {
+  const { name, email, message } = req.body || {};
+  if (!name || !email || !message) {
+    return res.status(400).json({ message: 'Name, email, and message are required' });
+  }
+  const query = {
+    id: Date.now(),
+    name,
+    email,
+    message,
+    reply: null,
+    createdAt: new Date().toISOString(),
+  };
+  contactQueries.unshift(query);
+  res.status(201).json({ message: 'Message dispatched successfully! We\'ll reply within 24 hours.', query });
+});
+
+app.get('/api/contact/queries', (req, res) => {
+  res.json(contactQueries);
+});
+
+app.delete('/api/contact/queries/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const index = contactQueries.findIndex(q => q.id === id);
+  if (index === -1) {
+    return res.status(404).json({ message: 'Query not found' });
+  }
+  contactQueries.splice(index, 1);
+  res.json({ message: 'Query removed' });
+});
+
+app.post('/api/contact/queries/:id/reply', (req, res) => {
+  const id = Number(req.params.id);
+  const query = contactQueries.find(q => q.id === id);
+  if (!query) {
+    return res.status(404).json({ message: 'Query not found' });
+  }
+  const { reply } = req.body || {};
+  if (!reply) {
+    return res.status(400).json({ message: 'Reply text is required' });
+  }
+  query.reply = reply;
+  res.json({ query });
+});
+
+// Users endpoint (admin customers)
+app.get('/api/users', (req, res) => {
+  res.json(users);
+});
+
+// AI Chat endpoint
+app.post('/api/ai-chat', (req, res) => {
+  const { message } = req.body || {};
+  if (!message) {
+    return res.status(400).json({ message: 'Message is required' });
+  }
+  const lowerMsg = message.toLowerCase();
+  let text = '';
+  if (lowerMsg.includes('coupon') || lowerMsg.includes('discount') || lowerMsg.includes('offer')) {
+    text = 'We have active coupons: **SHOP10** (10% off) and **RARE50** (₹50 off on ₹500+). Head to the Home page to explore more deals!';
+  } else if (lowerMsg.includes('watch') || lowerMsg.includes('zenith')) {
+    text = 'The **Zenith Carbon-V X-1** is our flagship smartwatch at ₹14,999 — carbon fiber build, next-gen sensors, and 12 in stock!';
+  } else if (lowerMsg.includes('gaming') || lowerMsg.includes('keyboard')) {
+    text = 'Check out the **Vortex Apex Mechanical Keyboard** by Crescent Labs at ₹6,200 — RGB backlit, aluminum chassis, tactile switches!';
+  } else if (lowerMsg.includes('audio') || lowerMsg.includes('earbud') || lowerMsg.includes('soundbud')) {
+    text = 'The **Aerial Nova Soundbuds** by AuraTone at ₹7,499 feature active noise cancellation and deep bass. Top rated in Audio!';
+  } else if (lowerMsg.includes('shipping') || lowerMsg.includes('delivery')) {
+    text = 'We offer **free shipping** on all orders above ₹4,999! Standard delivery takes 3-5 business days.';
+  } else if (lowerMsg.includes('return') || lowerMsg.includes('refund')) {
+    text = 'ShopSphere offers **30-day easy returns** on all products. Items must be unused with original packaging.';
+  } else {
+    text = 'Thank you for reaching out to **Iris**, your ShopSphere butler! You can ask me about products, coupons, shipping, or returns. Browse our Shop page for the latest collections!';
+  }
+  res.json({ text });
 });
 
 app.use(

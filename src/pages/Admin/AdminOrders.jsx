@@ -4,7 +4,6 @@ import { AppDispatch, RootState } from "../../app/store";
 import { fetchOrdersThunk, updateOrderStatusThunk } from "../../features/orders/orderSlice";
 import { OrdersTable } from "../../components/admin/AdminComponents";
 import { toast } from "react-hot-toast";
-import { Order } from "../../types";
 
 export const AdminOrders = () => {
   const dispatch = useDispatch();

@@ -33,7 +33,6 @@ import {
   CartesianGrid,
 } from "recharts";
 import { formatCurrency, formatDate } from "../../utils/format";
-import { Product, Order, User, ChartDataPoint, DashboardStats } from "../../types";
 import { cn } from "../../utils/cn";
 
 // ADMIN SIDEBAR NAVIGATION DRAWER Props
