@@ -13,6 +13,18 @@ import { useTheme } from "../../hooks/useTheme";
 import { useDispatch, useSelector } from "react-redux";
 import { SUPPORTED_CURRENCIES, setCurrency } from "../../features/currency/currencySlice";
 
+const API_URL = import.meta.env.VITE_API_URL || "https://localhost:7015/api";
+
+const broadcastFetch = async (path, options = {}) => {
+  try {
+    const externalPath = path.replace("/api/broadcasts", "");
+    const res = await fetch(`${API_URL}/Broadcasts${externalPath}`, options);
+    if (res.ok) return res;
+    throw new Error();
+  } catch {
+    return fetch(path, options);
+  }
+};
 
 const CURRENCY_DETAILS = {
   INR: { name: "Indian Rupee", nativeName: "रुपया" },
@@ -77,7 +89,7 @@ export const Navbar = () => {
   
   const fetchNavbarBroadcasts = async () => {
     try {
-      const res = await fetch("/api/broadcasts");
+      const res = await broadcastFetch("/api/broadcasts");
       if (res.ok) {
         const data = await res.json();
         setBroadcasts(data);

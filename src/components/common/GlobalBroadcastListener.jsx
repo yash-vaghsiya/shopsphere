@@ -2,6 +2,19 @@ import React, { useEffect, useState } from "react";
 import { toast } from "react-hot-toast";
 import { Megaphone, Bell, Volume2, Award, CheckCircle, ShieldAlert, X } from "lucide-react";
 
+const API_URL = import.meta.env.VITE_API_URL || "https://localhost:7015/api";
+
+const broadcastFetch = async (path, options = {}) => {
+  try {
+    const externalPath = path.replace("/api/broadcasts", "");
+    const res = await fetch(`${API_URL}/Broadcasts${externalPath}`, options);
+    if (res.ok) return res;
+    throw new Error();
+  } catch {
+    return fetch(path, options);
+  }
+};
+
 export const GlobalBroadcastListener = () => {
   useEffect(() => {
     // Keep track of shown broadcast IDs to avoid double-toasting
@@ -32,7 +45,7 @@ export const GlobalBroadcastListener = () => {
 
     const checkNewBroadcasts = async () => {
       try {
-        const res = await fetch("/api/broadcasts");
+        const res = await broadcastFetch("/api/broadcasts");
         if (!res.ok) return;
 
         const broadcasts = await res.json();

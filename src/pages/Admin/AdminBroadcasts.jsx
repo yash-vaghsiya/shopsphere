@@ -2,6 +2,19 @@ import React, { useState, useEffect } from "react";
 import { Megaphone, Send, Trash2, Clock, ShieldAlert, Award, FileText, Bell, Volume2, CheckCircle } from "lucide-react";
 import { toast } from "react-hot-toast";
 
+const API_URL = import.meta.env.VITE_API_URL || "https://localhost:7015/api";
+
+const broadcastFetch = async (path, options = {}) => {
+  try {
+    const externalPath = path.replace("/api/broadcasts", "");
+    const res = await fetch(`${API_URL}/Broadcasts${externalPath}`, options);
+    if (res.ok) return res;
+    throw new Error();
+  } catch {
+    return fetch(path, options);
+  }
+};
+
 export const AdminBroadcasts = () => {
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -15,7 +28,7 @@ export const AdminBroadcasts = () => {
   const fetchNotifications = async () => {
     try {
       setLoading(true);
-      const res = await fetch("/api/broadcasts");
+      const res = await broadcastFetch("/api/broadcasts");
       if (res.ok) {
         const data = await res.json();
         setNotifications(Array.isArray(data) ? data : []);
@@ -43,7 +56,7 @@ export const AdminBroadcasts = () => {
 
     try {
       setPublishing(true);
-      const res = await fetch("/api/broadcasts", {
+      const res = await broadcastFetch("/api/broadcasts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -79,7 +92,7 @@ export const AdminBroadcasts = () => {
     }
 
     try {
-      const res = await fetch(`/api/broadcasts/${id}`, { method: "DELETE" });
+      const res = await broadcastFetch(`/api/broadcasts/${id}`, { method: "DELETE" });
       if (res.ok) {
         toast.success("Broadcast alert recalled successfully.");
         fetchNotifications();
