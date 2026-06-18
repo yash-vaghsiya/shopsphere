@@ -4,75 +4,84 @@ import { Megaphone, Bell, Volume2, Award, CheckCircle, ShieldAlert, X } from "lu
 
 const API_URL = import.meta.env.VITE_API_URL || "https://localhost:7015/api";
 
-const broadcastFetch = async (path, options = {}) => {
-  try {
-    const externalPath = path.replace("/api/broadcasts", "");
-    const res = await fetch(`${API_URL}/Broadcasts${externalPath}`, options);
-    if (res.ok) return res;
-    throw new Error();
-  } catch {
-    return fetch(path, options);
-  }
-};
-
 export const GlobalBroadcastListener = () => {
   useEffect(() => {
-    // Keep track of shown broadcast IDs to avoid double-toasting
-    const getSeenIds = () => {
+    // Use a separate localStorage key to track which broadcasts have been
+    // toasted — this must NOT overlap with shop_seen_broadcasts (used by
+    // Navbar for read/unread badge).
+    const getToastedIds = () => {
       try {
-        const stored = localStorage.getItem("shop_seen_broadcasts");
+        const stored = localStorage.getItem("shop_toasted_broadcasts");
         return stored ? JSON.parse(stored) : [];
       } catch (e) {
         return [];
       }
     };
 
-    const saveSeenId = (id) => {
+    const saveToastedId = (id) => {
       try {
-        const seen = getSeenIds();
-        if (!seen.includes(id)) {
-          seen.push(id);
-          localStorage.setItem("shop_seen_broadcasts", JSON.stringify(seen));
+        const toasted = getToastedIds();
+        if (!toasted.includes(id)) {
+          toasted.push(id);
+          localStorage.setItem("shop_toasted_broadcasts", JSON.stringify(toasted));
         }
       } catch (e) {
         // Fail-safe
       }
     };
 
-    // First, let's load all current notifications silently on mount so we don't spam users
-    // who just opened the page with hundreds of historical updates.
+    // On first poll, silently register all existing broadcasts as toasted
+    // so the user only sees toast popups for genuinely NEW arrivals.
     let isInitialMount = true;
 
     const checkNewBroadcasts = async () => {
       try {
-        const res = await broadcastFetch("/api/broadcasts");
-        if (!res.ok) return;
+        const [externalRes, localRes] = await Promise.allSettled([
+          fetch(`${API_URL}/Broadcasts`),
+          fetch("/api/broadcasts")
+        ]);
 
-        const broadcasts = await res.json();
-        if (!broadcasts || broadcasts.length === 0) return;
+        let all = [];
+        if (externalRes.status === "fulfilled" && externalRes.value.ok) {
+          const data = await externalRes.value.json();
+          if (Array.isArray(data)) all.push(...data);
+        }
+        if (localRes.status === "fulfilled" && localRes.value.ok) {
+          const data = await localRes.value.json();
+          if (Array.isArray(data)) {
+            for (const item of data) {
+              if (!all.some((b) => String(b.id) === String(item.id))) {
+                all.push(item);
+              }
+            }
+          }
+        }
 
-        const seenList = getSeenIds();
+        const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+        const now = Date.now();
+        const broadcasts = all.filter((b) => now - new Date(b.createdAt).getTime() <= TWENTY_FOUR_HOURS);
+        if (broadcasts.length === 0) return;
+
+        const toastedList = getToastedIds();
 
         if (isInitialMount) {
-          // On first page load, register all existing announcements
-          // so the user starts fresh and only receives NEW active pushes in real time.
           broadcasts.forEach((b) => {
-            if (!seenList.includes(b.id)) {
-              saveSeenId(b.id);
+            if (!toastedList.includes(b.id)) {
+              saveToastedId(b.id);
             }
           });
           isInitialMount = false;
           return;
         }
 
-        // Identify any notifications not yet seen by this device
-        const freshAlerts = broadcasts.filter((b) => !seenList.includes(b.id));
+        // Identify any notifications not yet toasted on this device
+        const freshAlerts = broadcasts.filter((b) => !toastedList.includes(b.id));
 
         if (freshAlerts.length > 0) {
           // Process and toast each fresh alert
           freshAlerts.forEach((alert) => {
-            // Save
-            saveSeenId(alert.id);
+            // Save so we don't toast it again
+            saveToastedId(alert.id);
 
             // Play a soft announcement audio tone or browser native beep if supported
             try {

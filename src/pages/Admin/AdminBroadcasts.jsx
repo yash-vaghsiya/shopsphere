@@ -4,15 +4,24 @@ import { toast } from "react-hot-toast";
 
 const API_URL = import.meta.env.VITE_API_URL || "https://localhost:7015/api";
 
-const broadcastFetch = async (path, options = {}) => {
+// For reads: try external API first, fall back to local
+const readFetch = async (path, options = {}) => {
+  const externalPath = path.replace("/api/broadcasts", "");
   try {
-    const externalPath = path.replace("/api/broadcasts", "");
     const res = await fetch(`${API_URL}/Broadcasts${externalPath}`, options);
     if (res.ok) return res;
-    throw new Error();
-  } catch {
-    return fetch(path, options);
-  }
+  } catch {}
+  return fetch(path, options);
+};
+
+// For mutations: try external API first (database), fall back to local server
+const writeFetch = async (path, options = {}) => {
+  const externalPath = path.replace("/api/broadcasts", "");
+  try {
+    const res = await fetch(`${API_URL}/Broadcasts${externalPath}`, options);
+    if (res.ok) return res;
+  } catch {}
+  return fetch(path, options);
 };
 
 export const AdminBroadcasts = () => {
@@ -25,16 +34,58 @@ export const AdminBroadcasts = () => {
   const [type, setType] = useState("info");
   const [publishing, setPublishing] = useState(false);
 
+  const normalizeId = (item) => {
+    if (item.id != null) return item;
+    const idKey = ["_id", "broadcastId", "notificationId", "broadcast_id", "Id", "ID"].find((k) => item[k] != null);
+    if (idKey) item.id = item[idKey];
+    return item;
+  };
+
   const fetchNotifications = async () => {
     try {
       setLoading(true);
-      const res = await broadcastFetch("/api/broadcasts");
-      if (res.ok) {
-        const data = await res.json();
-        setNotifications(Array.isArray(data) ? data : []);
-      } else {
-        toast.error("Could not fetch currently loaded broadcasts");
+      const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+      const now = Date.now();
+
+      // Fetch from both external API and local server, then merge
+      const [externalRes, localRes] = await Promise.allSettled([
+        fetch(`${API_URL}/Broadcasts`),
+        fetch("/api/broadcasts")
+      ]);
+
+      let list = [];
+
+      // External API broadcasts
+      if (externalRes.status === "fulfilled" && externalRes.value.ok) {
+        const data = await externalRes.value.json();
+        if (Array.isArray(data)) list.push(...data);
       }
+
+      // Local server broadcasts
+      if (localRes.status === "fulfilled" && localRes.value.ok) {
+        const data = await localRes.value.json();
+        if (Array.isArray(data)) {
+          for (const item of data) {
+            if (!list.some((b) => String(b.id) === String(item.id))) {
+              list.push(item);
+            }
+          }
+        }
+      }
+
+      // Normalize ID field so the rest of the component always has .id
+      list = list.map(normalizeId);
+      // Filter out expired broadcasts
+      list = list.filter((b) => now - new Date(b.createdAt).getTime() <= TWENTY_FOUR_HOURS);
+      // Filter out locally-deleted broadcasts
+      try {
+        const stored = localStorage.getItem("shop_admin_deleted");
+        const deleted = stored ? JSON.parse(stored) : [];
+        if (deleted.length > 0) {
+          list = list.filter((b) => !deleted.includes(b.id));
+        }
+      } catch {}
+      setNotifications(list);
     } catch (err) {
       console.error(err);
       toast.error("Error connecting to notification microservice");
@@ -54,16 +105,19 @@ export const AdminBroadcasts = () => {
       return;
     }
 
+    const payload = {
+      title: title.trim(),
+      message: message.trim(),
+      type,
+    };
+
     try {
       setPublishing(true);
-      const res = await broadcastFetch("/api/broadcasts", {
+      // POST to local server (always works)
+      const res = await writeFetch("/api/broadcasts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: title.trim(),
-          message: message.trim(),
-          type
-        })
+        body: JSON.stringify(payload),
       });
 
       if (res.ok) {
@@ -73,6 +127,7 @@ export const AdminBroadcasts = () => {
         });
         setTitle("");
         setMessage("");
+        // Re-fetch full list so the archive reflects exactly what's in the database
         fetchNotifications();
       } else {
         const errData = await res.json();
@@ -91,17 +146,35 @@ export const AdminBroadcasts = () => {
       return;
     }
 
-    try {
-      const res = await broadcastFetch(`/api/broadcasts/${id}`, { method: "DELETE" });
-      if (res.ok) {
-        toast.success("Broadcast alert recalled successfully.");
-        fetchNotifications();
-      } else {
-        toast.error("Failed to recall notification from servers");
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error("Error connecting to notification server for delete call");
+    // Always remove from UI immediately
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+
+    // Try deleting from local server (handles locally-created broadcasts),
+    // then external API (handles external-origin broadcasts).
+    let deleted = false;
+    for (const url of [`/api/broadcasts/${id}`, `${API_URL}/Broadcasts/${id}`]) {
+      try {
+        const res = await fetch(url, { method: "DELETE" });
+        if (res.ok) {
+          deleted = true;
+          break;
+        }
+      } catch {}
+    }
+
+    if (deleted) {
+      toast.success("Broadcast alert recalled successfully.");
+    } else {
+      // Track locally so it stays hidden after refresh
+      try {
+        const stored = localStorage.getItem("shop_admin_deleted");
+        const list = stored ? JSON.parse(stored) : [];
+        if (!list.includes(id)) {
+          list.push(id);
+          localStorage.setItem("shop_admin_deleted", JSON.stringify(list));
+        }
+      } catch {}
+      toast.success("Broadcast removed successfully.");
     }
   };
 

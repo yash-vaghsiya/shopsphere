@@ -15,17 +15,6 @@ import { SUPPORTED_CURRENCIES, setCurrency } from "../../features/currency/curre
 
 const API_URL = import.meta.env.VITE_API_URL || "https://localhost:7015/api";
 
-const broadcastFetch = async (path, options = {}) => {
-  try {
-    const externalPath = path.replace("/api/broadcasts", "");
-    const res = await fetch(`${API_URL}/Broadcasts${externalPath}`, options);
-    if (res.ok) return res;
-    throw new Error();
-  } catch {
-    return fetch(path, options);
-  }
-};
-
 const CURRENCY_DETAILS = {
   INR: { name: "Indian Rupee", nativeName: "रुपया" },
   USD: { name: "US Dollar", nativeName: "Dollar" },
@@ -86,24 +75,48 @@ export const Navbar = () => {
   const [broadcasts, setBroadcasts] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
 
-  
+  const getSeenIds = () => {
+    try {
+      const stored = localStorage.getItem("shop_seen_broadcasts");
+      return stored ? JSON.parse(stored) : [];
+    } catch (e) {
+      return [];
+    }
+  };
+
   const fetchNavbarBroadcasts = async () => {
     try {
-      const res = await broadcastFetch("/api/broadcasts");
-      if (res.ok) {
-        const data = await res.json();
-        setBroadcasts(data);
+      const [externalRes, localRes] = await Promise.allSettled([
+        fetch(`${API_URL}/Broadcasts`),
+        fetch("/api/broadcasts")
+      ]);
 
-        // Compute unread alert count from cached localStorage IDs
-        let seenIds = [];
-        try {
-          const stored = localStorage.getItem("shop_seen_broadcasts");
-          seenIds = stored ? JSON.parse(stored) : [];
-        } catch (e) {}
-
-        const unread = data.filter((b) => !seenIds.includes(b.id)).length;
-        setUnreadCount(unread);
+      let all = [];
+      // External API broadcasts
+      if (externalRes.status === "fulfilled" && externalRes.value.ok) {
+        const data = await externalRes.value.json();
+        if (Array.isArray(data)) all.push(...data);
       }
+      // Local server broadcasts (deduplicate by ID)
+      if (localRes.status === "fulfilled" && localRes.value.ok) {
+        const data = await localRes.value.json();
+        if (Array.isArray(data)) {
+          for (const item of data) {
+            if (!all.some((b) => String(b.id) === String(item.id))) {
+              all.push(item);
+            }
+          }
+        }
+      }
+
+      const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+      const now = Date.now();
+      const recent = all.filter((b) => now - new Date(b.createdAt).getTime() <= TWENTY_FOUR_HOURS);
+      setBroadcasts(recent);
+
+      const seenIds = getSeenIds();
+      const unread = recent.filter((b) => !seenIds.includes(b.id)).length;
+      setUnreadCount(unread);
     } catch (err) {
       console.warn("Could not synchronize header announcements:", err);
     }
@@ -111,21 +124,31 @@ export const Navbar = () => {
 
   useEffect(() => {
     fetchNavbarBroadcasts();
-    const interval = setInterval(fetchNavbarBroadcasts, 7000); // Poll every 7 seconds
+    const interval = setInterval(fetchNavbarBroadcasts, 7000);
     return () => clearInterval(interval);
   }, []);
 
-  const handleMarkAllRead = () => {
+  const handleMarkOneRead = (id) => {
     try {
-      const seenIds = broadcasts.map((b) => b.id);
-      localStorage.setItem("shop_seen_broadcasts", JSON.stringify(seenIds));
-      setUnreadCount(0);
-      toastNavbarFeedback();
+      const seenIds = getSeenIds();
+      if (!seenIds.includes(id)) {
+        seenIds.push(id);
+        localStorage.setItem("shop_seen_broadcasts", JSON.stringify(seenIds));
+        setUnreadCount((prev) => Math.max(0, prev - 1));
+      }
     } catch (e) {}
   };
 
-  const toastNavbarFeedback = () => {
-    toast.success("All broadcasts marked");
+  const handleMarkAllRead = () => {
+    try {
+      const currentIds = broadcasts.map((b) => b.id);
+      const existing = getSeenIds();
+      const merged = [...new Set([...existing, ...currentIds])];
+      localStorage.setItem("shop_seen_broadcasts", JSON.stringify(merged));
+      setUnreadCount(0);
+      setShowBroadcasts(false);
+      toast.success("All broadcasts marked");
+    } catch (e) {}
   };
 
   const handleSearchSubmit = (e) => {
@@ -275,8 +298,14 @@ export const Navbar = () => {
                           if (b.type === "warning") icon = <ShieldAlert size={13} className="text-amber-500" />;
                           if (b.type === "offer") icon = <Award size={13} className="text-purple-500" />;
 
+                          const isUnread = unreadCount > 0 && !getSeenIds().includes(b.id);
+
                           return (
-                            <div key={b.id} className="p-3.5 hover:bg-gray-50 dark:hover:bg-slate-850/40 flex gap-3 items-start transition-colors">
+                            <div
+                              key={b.id}
+                              onClick={() => handleMarkOneRead(b.id)}
+                              className={`p-3.5 hover:bg-gray-50 dark:hover:bg-slate-850/40 flex gap-3 items-start transition-colors cursor-pointer ${isUnread ? "bg-blue-50/40 dark:bg-blue-950/20" : ""}`}
+                            >
                               <div className="p-1.5 bg-gray-100 dark:bg-slate-950 rounded-lg shrink-0">
                                 {icon}
                               </div>
@@ -291,6 +320,9 @@ export const Navbar = () => {
                                     {new Date(b.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {new Date(b.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}
                                 </span>
                               </div>
+                              {isUnread && (
+                                <span className="w-2 h-2 bg-blue-500 rounded-full shrink-0 mt-1.5" />
+                              )}
                             </div>
                           );
                         })
@@ -691,14 +723,7 @@ export const Navbar = () => {
             {/* Quick status alerts trigger accordion */}
             <div className="flex items-center justify-between border-t border-gray-100 dark:border-gray-850 pt-4 px-1.5 select-none">
               <button
-                onClick={() => {
-                  setShowBroadcasts(!showBroadcasts);
-                  if (!showBroadcasts && unreadCount > 0) {
-                    const seenIds = broadcasts.map((b) => b.id);
-                    localStorage.setItem("shop_seen_broadcasts", JSON.stringify(seenIds));
-                    setUnreadCount(0);
-                  }
-                }}
+                onClick={() => setShowBroadcasts(!showBroadcasts)}
                 type="button"
                 className="flex items-center gap-2 text-gray-600 dark:text-gray-300 hover:text-blue-650 bg-transparent border-0 cursor-pointer outline-none relative"
                 title="View newsletters & sales alert"
@@ -731,21 +756,40 @@ export const Navbar = () => {
 
             {/* Mobile Broadcast Bulletins List expanded accordion */}
             {showBroadcasts && broadcasts.length > 0 && (
-              <div className="bg-gray-50/60 dark:bg-slate-900/40 rounded-2xl p-3.5 space-y-2.5 border border-gray-100 dark:border-slate-800 text-left select-none animate-fade-in max-h-48 overflow-y-auto">
-                <span className="text-[8px] text-gray-400 font-extrabold uppercase tracking-widest block border-b border-gray-100 pb-1.5">
-                  Store Bulletin Feed
-                </span>
-                {broadcasts.map((b) => (
-                  <div key={b.id} className="text-[11px] space-y-1 pb-2 last:pb-0 border-b last:border-b-0 border-gray-100/50 dark:border-slate-850/30">
-                    <div className="flex items-center gap-1.5 font-extrabold text-gray-950 dark:text-white leading-tight">
-                      <span className="text-blue-500">•</span>
-                      <span>{b.title}</span>
+              <div className="bg-gray-50/60 dark:bg-slate-900/40 rounded-2xl p-3.5 space-y-2.5 border border-gray-100 dark:border-slate-800 text-left select-none animate-fade-in max-h-56 overflow-y-auto">
+                <div className="flex items-center justify-between border-b border-gray-100 pb-1.5">
+                  <span className="text-[8px] text-gray-400 font-extrabold uppercase tracking-widest">
+                    Store Bulletin Feed
+                  </span>
+                  {unreadCount > 0 && (
+                    <button
+                      onClick={handleMarkAllRead}
+                      type="button"
+                      className="text-[8px] text-blue-600 hover:text-blue-700 hover:underline font-extrabold border-0 bg-transparent cursor-pointer outline-none"
+                    >
+                      Mark all read
+                    </button>
+                  )}
+                </div>
+                {broadcasts.map((b) => {
+                  const isUnread = !getSeenIds().includes(b.id);
+                  return (
+                    <div
+                      key={b.id}
+                      onClick={() => handleMarkOneRead(b.id)}
+                      className={`text-[11px] space-y-1 pb-2 last:pb-0 border-b last:border-b-0 border-gray-100/50 dark:border-slate-850/30 cursor-pointer ${isUnread ? "bg-blue-50/30 dark:bg-blue-950/10 -mx-1 px-1 rounded-lg" : ""}`}
+                    >
+                      <div className="flex items-center gap-1.5 font-extrabold text-gray-950 dark:text-white leading-tight">
+                        <span className={`${isUnread ? "text-blue-500" : "text-gray-400"} shrink-0`}>•</span>
+                        <span>{b.title}</span>
+                        {isUnread && <span className="w-1.5 h-1.5 bg-blue-500 rounded-full shrink-0" />}
+                      </div>
+                      <p className="text-gray-500 dark:text-gray-400 leading-normal font-semibold pl-2.5">
+                        {b.message}
+                      </p>
                     </div>
-                    <p className="text-gray-500 dark:text-gray-400 leading-normal font-semibold pl-2.5">
-                      {b.message}
-                    </p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 

@@ -1,9 +1,24 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 app.use(express.json());
+
+const DATA_DIR = path.resolve('data');
+const BROADCASTS_FILE = path.join(DATA_DIR, 'broadcasts.json');
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+const loadJson = (file, fallback) => {
+  try {
+    if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf-8'));
+  } catch {}
+  return fallback;
+};
+const saveJson = (file, data) => {
+  fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf-8');
+};
 
 const getUserFromHeader = (req) => {
   const email = req.headers["x-user-email"] || req.headers["X-User-Email"] || null;
@@ -77,7 +92,7 @@ const coupons = [
   },
 ];
 
-const broadcasts = [
+const broadcasts = loadJson(BROADCASTS_FILE, [
   {
     id: 1,
     title: "Weekend Flash Sale",
@@ -85,7 +100,7 @@ const broadcasts = [
     type: "offer",
     createdAt: new Date().toISOString(),
   },
-];
+]);
 
 const orders = [];
 
@@ -187,6 +202,15 @@ app.delete('/api/coupons/:id', (req, res) => {
 });
 
 app.get('/api/broadcasts', (req, res) => {
+  const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  for (let i = broadcasts.length - 1; i >= 0; i--) {
+    const age = now - new Date(broadcasts[i].createdAt).getTime();
+    if (age > TWENTY_FOUR_HOURS) {
+      broadcasts.splice(i, 1);
+    }
+  }
+  saveJson(BROADCASTS_FILE, broadcasts);
   res.json(broadcasts);
 });
 
@@ -206,16 +230,18 @@ app.post('/api/broadcasts', (req, res) => {
   };
 
   broadcasts.unshift(newBroadcast);
+  saveJson(BROADCASTS_FILE, broadcasts);
   res.status(201).json(newBroadcast);
 });
 
 app.delete('/api/broadcasts/:id', (req, res) => {
-  const broadcastId = Number(req.params.id);
-  const index = broadcasts.findIndex((item) => item.id === broadcastId);
+  const broadcastId = String(req.params.id);
+  const index = broadcasts.findIndex((item) => String(item.id) === broadcastId);
   if (index === -1) {
     return res.status(404).json({ message: 'Broadcast not found' });
   }
   broadcasts.splice(index, 1);
+  saveJson(BROADCASTS_FILE, broadcasts);
   res.json({ message: 'Broadcast removed successfully' });
 });
 
