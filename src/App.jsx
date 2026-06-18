@@ -1,7 +1,8 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { Provider } from "react-redux";
+import { Provider, useDispatch } from "react-redux";
 import { store } from "./app/store";
+import { fetchCartThunk } from "./features/cart/cartSlice";
 import ThemeProvider from "./context/ThemeContext";
 import { CompareProvider } from "./context/CompareContext";
 import GlobalBroadcastListener from "./components/common/GlobalBroadcastListener";
@@ -51,6 +52,12 @@ import AdminDiscounts from "./pages/Admin/AdminDiscounts";
 import AdminBroadcasts from "./pages/Admin/AdminBroadcasts";
 import AdminSubscribers from "./pages/Admin/AdminSubscribers";
 import AdminQueries from "./pages/Admin/AdminQueries";
+
+const CartInit = () => {
+  const dispatch = useDispatch();
+  useEffect(() => { dispatch(fetchCartThunk()); }, [dispatch]);
+  return null;
+};
 
 export default function App() {
   return (
@@ -111,6 +118,7 @@ export default function App() {
             </Routes>
             
             {/* Global Hot Notifications Stack */}
+            <CartInit />
             <GlobalBroadcastListener />
             <AISphereButler />
             <ProductCompareTray />

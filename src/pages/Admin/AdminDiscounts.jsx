@@ -1,9 +1,59 @@
 import React, { useState, useEffect } from "react";
 import { useDispatch, useSelector } from "react-redux";
-import { AppDispatch, RootState } from "../../app/store";
 import { fetchProductsThunk } from "../../features/products/productSlice";
 import { formatCurrency } from "../../utils/format";
 import { toast } from "react-hot-toast";
+
+const API_URL = import.meta.env.VITE_API_URL || "https://localhost:7015/api";
+
+const getAuthHeaders = () => {
+  const headers = { "Content-Type": "application/json" };
+  try {
+    const token = localStorage.getItem("token");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const user = JSON.parse(localStorage.getItem("user") || "{}");
+    if (user.email) headers["X-User-Email"] = user.email;
+    if (user.role) headers["X-User-Role"] = user.role;
+    if (user.id) headers["X-User-Id"] = String(user.id);
+  } catch {}
+  return headers;
+};
+
+// Discount API helpers – try external database first, fall back to local server
+const discountFetch = async (path, options = {}) => {
+  const externalPath = path.replace("/api/coupons", "/Discounts").replace("/api/discounts", "/Discounts");
+  const writeMethods = ["POST", "PATCH", "PUT", "DELETE"];
+  const isWrite = options.method && writeMethods.includes(options.method.toUpperCase());
+
+  if (isWrite) {
+    // For writes, try external API (database) first
+    try {
+      let bodyCopy;
+      if (options.body && typeof options.body === "string") {
+        bodyCopy = JSON.parse(options.body);
+      }
+      const extRes = await fetch(`${API_URL}${externalPath}`, {
+        method: options.method,
+        headers: { ...getAuthHeaders(), ...options.headers },
+        body: bodyCopy ? JSON.stringify(bodyCopy) : undefined,
+      });
+      if (extRes.ok) {
+        // External succeeded — also sync to local server to keep it consistent
+        fetch(path, options).catch(() => {});
+        return extRes;
+      }
+    } catch {}
+    // External failed — fall back to local server
+    return fetch(path, options);
+  }
+
+  // For reads (GET), try external first, fall back to local
+  try {
+    const extRes = await fetch(`${API_URL}${externalPath}`, { headers: getAuthHeaders() });
+    if (extRes.ok) return extRes;
+  } catch {}
+  return fetch(path, options);
+};
 import { 
   Tag, 
   Percent, 
@@ -73,17 +123,43 @@ export const AdminDiscounts = () => {
   const [promoOriginalPrice, setPromoOriginalPrice] = useState("");
   const [updatingDiscountId, setUpdatingDiscountId] = useState(null);
 
-  // Fetch Coupons Database info
+  const normalizeId = (item) => {
+    if (item.id != null) return item;
+    const idKey = ["_id", "couponId", "discountId", "Id", "ID"].find((k) => item[k] != null);
+    if (idKey) item.id = item[idKey];
+    return item;
+  };
+
+  // Fetch Coupons Database info from both external API and local server
   const fetchCoupons = async () => {
     try {
       setCouponsLoading(true);
-      const res = await fetch("/api/coupons");
-      if (res.ok) {
-        const data = await res.json();
-        setCoupons(Array.isArray(data) ? data : []);
-      } else {
-        toast.error("Could not fetch active system coupons");
+      const [externalRes, localRes] = await Promise.allSettled([
+        fetch(`${API_URL}/Discounts`, { headers: getAuthHeaders() }),
+        fetch("/api/coupons"),
+      ]);
+
+      let list = [];
+      // External API (database)
+      if (externalRes.status === "fulfilled" && externalRes.value.ok) {
+        const data = await externalRes.value.json();
+        if (Array.isArray(data)) {
+          list.push(...data.map(normalizeId));
+        }
       }
+      // Local server (deduplicate by coupon code to avoid duplicates from external sync)
+      if (localRes.status === "fulfilled" && localRes.value.ok) {
+        const data = await localRes.value.json();
+        if (Array.isArray(data)) {
+          for (const item of data) {
+            const code = item.code || "";
+            if (!list.some((c) => (c.code || "").toUpperCase() === code.toUpperCase())) {
+              list.push(item);
+            }
+          }
+        }
+      }
+      setCoupons(list);
     } catch (e) {
       console.error(e);
       toast.error("Error establishing connection with coupon server");
@@ -127,7 +203,7 @@ export const AdminDiscounts = () => {
       const url = editingCoupon ? `/api/coupons/${editingCoupon.id}` : "/api/coupons";
       const method = editingCoupon ? "PATCH" : "POST";
 
-      const res = await fetch(url, {
+      const res = await discountFetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -160,7 +236,7 @@ export const AdminDiscounts = () => {
   // Toggle active/inactive state of a promotion
   const handleToggleCoupon = async (coupon) => {
     try {
-      const res = await fetch(`/api/coupons/${coupon.id}`, {
+      const res = await discountFetch(`/api/coupons/${coupon.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isActive: !coupon.isActive })
@@ -181,7 +257,7 @@ export const AdminDiscounts = () => {
     if (!window.confirm(`Are you sure you want to permanently retire coupon ${name}?`)) return;
 
     try {
-      const res = await fetch(`/api/coupons/${id}`, { method: "DELETE" });
+      const res = await discountFetch(`/api/coupons/${id}`, { method: "DELETE" });
       if (res.ok) {
         toast.success(`Coupon ${name} removed from system catalog`);
         fetchCoupons();

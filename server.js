@@ -568,6 +568,34 @@ app.get('/api/users', (req, res) => {
   res.json(users);
 });
 
+// In-memory cart store per user (keyed by email)
+const userCarts = {};
+
+// Cart endpoints
+app.get('/api/cart', (req, res) => {
+  const user = getUserFromHeader(req);
+  const key = user.email || 'anonymous';
+  if (!userCarts[key]) userCarts[key] = [];
+  res.json(userCarts[key]);
+});
+
+app.post('/api/cart/sync', (req, res) => {
+  const user = getUserFromHeader(req);
+  const key = user.email || 'anonymous';
+  const items = req.body;
+  if (!Array.isArray(items)) {
+    return res.status(400).json({ message: 'Cart items must be an array' });
+  }
+  userCarts[key] = items.map((item) => ({
+    id: item.id,
+    name: item.name,
+    price: Number(item.price),
+    image: item.image || '',
+    quantity: Math.max(1, Number(item.quantity) || 1),
+  }));
+  res.json({ message: 'Cart synced' });
+});
+
 // AI Chat endpoint
 app.post('/api/ai-chat', (req, res) => {
   const { message } = req.body || {};

@@ -6,6 +6,20 @@ import { useCart } from "../../hooks/useCart";
 import { formatCurrency } from "../../utils/format";
 import { toast } from "react-hot-toast";
 
+const API_URL = import.meta.env.VITE_API_URL || "https://localhost:7015/api";
+
+const getAuthHeaders = () => {
+  const headers = { "Content-Type": "application/json" };
+  try {
+    const token = localStorage.getItem("token");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const user = JSON.parse(localStorage.getItem("user") || "{}");
+    if (user.email) headers["X-User-Email"] = user.email;
+    if (user.role) headers["X-User-Role"] = user.role;
+  } catch {}
+  return headers;
+};
+
 export const CartSummary = () => {
   const { totalAmount } = useCart();
   const [couponCode, setCouponCode] = useState("");
@@ -21,11 +35,27 @@ export const CartSummary = () => {
     const fetchCoupons = async () => {
       try {
         setCouponsLoading(true);
-        const res = await fetch("/api/coupons");
-        if (res.ok) {
-          const data = await res.json();
-          setAllCoupons(Array.isArray(data) ? data : []);
+        const [externalRes, localRes] = await Promise.allSettled([
+          fetch(`${API_URL}/Discounts`, { headers: getAuthHeaders() }),
+          fetch("/api/coupons"),
+        ]);
+
+        let list = [];
+        if (externalRes.status === "fulfilled" && externalRes.value.ok) {
+          const data = await externalRes.value.json();
+          if (Array.isArray(data)) list.push(...data);
         }
+        if (localRes.status === "fulfilled" && localRes.value.ok) {
+          const data = await localRes.value.json();
+          if (Array.isArray(data)) {
+            for (const item of data) {
+              if (!list.some((c) => (c.code || "").toUpperCase() === (item.code || "").toUpperCase())) {
+                list.push(item);
+              }
+            }
+          }
+        }
+        setAllCoupons(list);
       } catch (err) {
         console.error("Error loading coupons:", err);
       } finally {
@@ -47,16 +77,29 @@ export const CartSummary = () => {
     const formatted = couponCode.trim().toUpperCase();
     if (!formatted) return;
 
-    try {
-      setValidating(true);
-      const res = await fetch("/api/coupons/validate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: formatted, amount: totalAmount })
-      });
+      try {
+        setValidating(true);
+        // Try local validation first
+        let res = await fetch("/api/coupons/validate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: formatted, amount: totalAmount })
+        });
 
-      if (res.ok) {
-        const coupon = await res.json();
+        // If local fails, try external API validation
+        if (!res.ok) {
+          try {
+            const extRes = await fetch(`${API_URL}/Discounts/validate`, {
+              method: "POST",
+              headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+              body: JSON.stringify({ code: formatted, amount: totalAmount })
+            });
+            if (extRes.ok) res = extRes;
+          } catch {}
+        }
+
+        if (res.ok) {
+          const coupon = await res.json();
         let computedPercent = 0;
         if (coupon.discountType === "percentage") {
           computedPercent = coupon.discountValue / 100;
