@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import Register from './src/pages/Auth/Register';
+
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -415,11 +415,30 @@ const subscribers = [];
 // Contact queries (in-memory)
 const contactQueries = [];
 
-// In-memory user store for mock auth
-const users = [
-  { id: 1, name: 'Admin User', email: 'admin@shopsphere.com', role: 'Admin' },
-  { id: 2, name: 'Demo User', email: 'user@shopsphere.com', role: 'Customer' },
-];
+// In-memory user store for mock auth fallback
+const users = [];
+
+// External API base URL for dynamic forwarding (server-to-server, no CORS)
+const EXTERNAL_API = process.env.VITE_API_URL || 'https://localhost:7015/api';
+
+// Helper: forward auth request to external API
+const forwardAuth = async (endpoint, body) => {
+  try {
+    const res = await fetch(`${EXTERNAL_API}${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return { ok: true, data };
+    }
+    const errData = await res.json().catch(() => ({}));
+    return { ok: false, status: res.status, message: errData.message || errData.title || 'External auth failed' };
+  } catch {
+    return { ok: false, message: 'External API unreachable' };
+  }
+};
 
 // Mock auth endpoints
 app.get('/api/auth/me', (req, res) => {
@@ -427,11 +446,9 @@ app.get('/api/auth/me', (req, res) => {
   if (!email && !userId) {
     return res.status(401).json({ message: 'Not authenticated' });
   }
-  // Look up user in users array, or return a mock user
   let user = users.find(u => u.email === email || String(u.id) === String(userId));
   if (!user) {
-    // user = { id: userId || Date.now(), setName: 'Demo User', email: email || 'guest@shopsphere.com', role: role || 'Customer' };
-    user = { id: userId || Date.now(), userName: { userName }, email: email || 'guest@shopsphere.com', role: role || 'Customer' };
+    user = { id: userId || Date.now(), name: 'User', email: email || 'guest@shopsphere.com', role: role || 'Customer' };
   }
   res.json({ user });
 });
@@ -456,31 +473,45 @@ app.patch('/api/auth/me', (req, res) => {
   res.json({ user });
 });
 
-app.post('/api/auth/register', (req, res) => {
+app.post('/api/auth/register', async (req, res) => {
   const { name, email, password } = req.body || {};
   if (!name || !email || !password) {
     return res.status(400).json({ message: 'Missing required fields' });
   }
+  // Try external API first (server-to-server, no CORS)
+  const ext = await forwardAuth('/Auth/register', { firstName: name, lastName: '', email, password });
+  if (ext.ok) {
+    const extUser = ext.data.user || {};
+    const user = { id: extUser.id || Date.now(), name: extUser.name || name, email, role: extUser.role || 'Customer' };
+    const idx = users.findIndex(u => u.email === email);
+    if (idx >= 0) users[idx] = user; else users.push(user);
+    return res.status(201).json({ user, token: ext.data.token });
+  }
+  // Fall back to local mock
   const id = Date.now();
   const isAdmin = String(email).toLowerCase().includes("admin");
   const user = { id, name, email, role: isAdmin ? 'Admin' : 'Customer' };
-  // Persist user for profile lookups
-  const existingIndex = users.findIndex(u => u.email === email);
-  if (existingIndex >= 0) {
-    users[existingIndex] = user;
-  } else {
-    users.push(user);
-  }
+  const idx = users.findIndex(u => u.email === email);
+  if (idx >= 0) users[idx] = user; else users.push(user);
   const token = `mock-token-${id}`;
   return res.status(201).json({ user, token });
 });
 
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) {
     return res.status(400).json({ message: 'Missing email or password' });
   }
-  // Only allow login for registered users
+  // Try external API first (server-to-server, no CORS)
+  const ext = await forwardAuth('/Auth/login', { email, password });
+  if (ext.ok) {
+    const extUser = ext.data.user || {};
+    const user = { id: extUser.id || Date.now(), name: extUser.name || email.split('@')[0], email, role: extUser.role || 'Customer' };
+    const idx = users.findIndex(u => u.email === email);
+    if (idx >= 0) users[idx] = user; else users.push(user);
+    return res.json({ user, token: ext.data.token });
+  }
+  // Fall back to local mock — only allow registered users
   const existingUser = users.find(u => u.email === email);
   if (!existingUser) {
     return res.status(401).json({ message: 'Account not found. Please register first.' });
