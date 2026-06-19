@@ -1,27 +1,14 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 
-const API_URL = import.meta.env.VITE_API_URL || "https://localhost:7015/api";
-
-// Cart API helpers – try external API first, fall back to local server
-const cartRead = async () => {
-  try {
-    const res = await fetch(`${API_URL}/Cart`);
-    if (res.ok) return res;
-  } catch {}
-  return fetch("/api/cart");
-};
+// Cart API helpers — route through local server (server proxies to external API)
+const cartRead = async () => fetch("/api/cart");
 
 const cartWrite = async (items) => {
-  const opts = {
+  return fetch("/api/cart/sync", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(items),
-  };
-  try {
-    const res = await fetch(`${API_URL}/Cart/sync`, opts);
-    if (res.ok) return res;
-  } catch {}
-  return fetch("/api/cart/sync", opts);
+  });
 };
 
 // Persist cart helper
@@ -80,56 +67,57 @@ const cartSlice = createSlice({
         ? Number(action.payload.quantity)
         : 1;
 
-      if (existingItemIndex > -1) {
-        state.items[existingItemIndex].quantity = Number(state.items[existingItemIndex].quantity) + quantityToAdd;
+      if (existingItemIndex >= 0) {
+        state.items[existingItemIndex].quantity += quantityToAdd;
       } else {
-        state.items.push({
+        const newItem = {
           id: action.payload.id,
-          name: action.payload.name,
-          price: action.payload.price,
+          name: action.payload.name || "Product",
+          price: Number(action.payload.price) || 0,
           image: action.payload.image || "",
           quantity: quantityToAdd,
-        });
+        };
+        state.items.push(newItem);
       }
-
       const totals = calculateTotals(state.items);
       state.totalItems = totals.totalItems;
       state.totalAmount = totals.totalAmount;
-      try {
-        localStorage.setItem("cart", JSON.stringify(state.items));
-      } catch (e) {}
+      try { localStorage.setItem("cart", JSON.stringify(state.items)); } catch {}
     },
+
     removeFromCart: (state, action) => {
       state.items = state.items.filter((item) => item.id !== action.payload);
-
       const totals = calculateTotals(state.items);
       state.totalItems = totals.totalItems;
       state.totalAmount = totals.totalAmount;
-      try {
-        localStorage.setItem("cart", JSON.stringify(state.items));
-      } catch (e) {}
+      try { localStorage.setItem("cart", JSON.stringify(state.items)); } catch {}
     },
+
     updateQuantity: (state, action) => {
-      const item = state.items.find((item) => item.id === action.payload.id);
+      const { id, quantity } = action.payload;
+      const item = state.items.find((item) => item.id === id);
       if (item) {
-        const parsedQuantity = Number(action.payload.quantity);
-        item.quantity = Number.isFinite(parsedQuantity) && parsedQuantity > 0 ? Math.max(1, parsedQuantity) : 1;
+        item.quantity = Math.max(1, quantity);
       }
-
       const totals = calculateTotals(state.items);
       state.totalItems = totals.totalItems;
       state.totalAmount = totals.totalAmount;
-      try {
-        localStorage.setItem("cart", JSON.stringify(state.items));
-      } catch (e) {}
+      try { localStorage.setItem("cart", JSON.stringify(state.items)); } catch {}
     },
+
     clearCart: (state) => {
       state.items = [];
       state.totalItems = 0;
       state.totalAmount = 0;
-      try {
-        localStorage.setItem("cart", JSON.stringify([]));
-      } catch (e) {}
+      try { localStorage.removeItem("cart"); } catch {}
+    },
+
+    syncCartToServer: (state) => {
+      if (state.items.length > 0) {
+        cartWrite(state.items).catch(() => {});
+      } else {
+        cartWrite([]).catch(() => {});
+      }
     },
   },
   extraReducers: (builder) => {
@@ -139,7 +127,7 @@ const cartSlice = createSlice({
       })
       .addCase(fetchCartThunk.fulfilled, (state, action) => {
         state.items = action.payload;
-        const totals = calculateTotals(state.items);
+        const totals = calculateTotals(action.payload);
         state.totalItems = totals.totalItems;
         state.totalAmount = totals.totalAmount;
         state.loading = false;
@@ -150,10 +138,5 @@ const cartSlice = createSlice({
   },
 });
 
-export const { addToCart, removeFromCart, updateQuantity, clearCart } = cartSlice.actions;
+export const { addToCart, removeFromCart, updateQuantity, clearCart, syncCartToServer } = cartSlice.actions;
 export default cartSlice.reducer;
-
-// Sync cart to server (call after mutations)
-export const syncCartToServer = (items) => {
-  cartWrite(items).catch(() => {});
-};

@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import Register from './src/pages/Auth/Register';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -415,7 +416,10 @@ const subscribers = [];
 const contactQueries = [];
 
 // In-memory user store for mock auth
-const users = [];
+const users = [
+  { id: 1, name: 'Admin User', email: 'admin@shopsphere.com', role: 'Admin' },
+  { id: 2, name: 'Demo User', email: 'user@shopsphere.com', role: 'Customer' },
+];
 
 // Mock auth endpoints
 app.get('/api/auth/me', (req, res) => {
@@ -426,7 +430,8 @@ app.get('/api/auth/me', (req, res) => {
   // Look up user in users array, or return a mock user
   let user = users.find(u => u.email === email || String(u.id) === String(userId));
   if (!user) {
-    user = { id: userId || Date.now(), name: 'Demo User', email: email || 'guest@shopsphere.com', role: role || 'Customer' };
+    // user = { id: userId || Date.now(), setName: 'Demo User', email: email || 'guest@shopsphere.com', role: role || 'Customer' };
+    user = { id: userId || Date.now(), userName: { userName }, email: email || 'guest@shopsphere.com', role: role || 'Customer' };
   }
   res.json({ user });
 });
@@ -475,18 +480,13 @@ app.post('/api/auth/login', (req, res) => {
   if (!email || !password) {
     return res.status(400).json({ message: 'Missing email or password' });
   }
-  const id = Date.now();
-  const isAdmin = String(email).toLowerCase().includes("admin");
-  const user = { id, name: 'Demo User', email, role: isAdmin ? 'Admin' : 'Customer' };
-  // Persist user for profile lookups
-  const existingIndex = users.findIndex(u => u.email === email);
-  if (existingIndex >= 0) {
-    users[existingIndex] = user;
-  } else {
-    users.push(user);
+  // Only allow login for registered users
+  const existingUser = users.find(u => u.email === email);
+  if (!existingUser) {
+    return res.status(401).json({ message: 'Account not found. Please register first.' });
   }
-  const token = `mock-token-${id}`;
-  return res.json({ user, token });
+  const token = `mock-token-${existingUser.id}`;
+  return res.json({ user: existingUser, token });
 });
 
 // Newsletter endpoints

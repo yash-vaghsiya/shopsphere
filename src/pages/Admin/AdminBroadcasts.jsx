@@ -2,27 +2,9 @@ import React, { useState, useEffect } from "react";
 import { Megaphone, Send, Trash2, Clock, ShieldAlert, Award, FileText, Bell, Volume2, CheckCircle } from "lucide-react";
 import { toast } from "react-hot-toast";
 
-const API_URL = import.meta.env.VITE_API_URL || "https://localhost:7015/api";
-
-// For reads: try external API first, fall back to local
-const readFetch = async (path, options = {}) => {
-  const externalPath = path.replace("/api/broadcasts", "");
-  try {
-    const res = await fetch(`${API_URL}/Broadcasts${externalPath}`, options);
-    if (res.ok) return res;
-  } catch {}
-  return fetch(path, options);
-};
-
-// For mutations: try external API first (database), fall back to local server
-const writeFetch = async (path, options = {}) => {
-  const externalPath = path.replace("/api/broadcasts", "");
-  try {
-    const res = await fetch(`${API_URL}/Broadcasts${externalPath}`, options);
-    if (res.ok) return res;
-  } catch {}
-  return fetch(path, options);
-};
+// Broadcast helpers — route through local server (server proxies to external API)
+const readFetch = async (path, options = {}) => fetch(path, options);
+const writeFetch = async (path, options = {}) => fetch(path, options);
 
 export const AdminBroadcasts = () => {
   const [notifications, setNotifications] = useState([]);
@@ -47,30 +29,12 @@ export const AdminBroadcasts = () => {
       const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
       const now = Date.now();
 
-      // Fetch from both external API and local server, then merge
-      const [externalRes, localRes] = await Promise.allSettled([
-        fetch(`${API_URL}/Broadcasts`),
-        fetch("/api/broadcasts")
-      ]);
+      const res = await readFetch("/api/broadcasts");
 
       let list = [];
-
-      // External API broadcasts
-      if (externalRes.status === "fulfilled" && externalRes.value.ok) {
-        const data = await externalRes.value.json();
-        if (Array.isArray(data)) list.push(...data);
-      }
-
-      // Local server broadcasts
-      if (localRes.status === "fulfilled" && localRes.value.ok) {
-        const data = await localRes.value.json();
-        if (Array.isArray(data)) {
-          for (const item of data) {
-            if (!list.some((b) => String(b.id) === String(item.id))) {
-              list.push(item);
-            }
-          }
-        }
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) list = data;
       }
 
       // Normalize ID field so the rest of the component always has .id
@@ -149,18 +113,12 @@ export const AdminBroadcasts = () => {
     // Always remove from UI immediately
     setNotifications((prev) => prev.filter((n) => n.id !== id));
 
-    // Try deleting from local server (handles locally-created broadcasts),
-    // then external API (handles external-origin broadcasts).
+    // Delete through local server (server proxies to external API)
     let deleted = false;
-    for (const url of [`/api/broadcasts/${id}`, `${API_URL}/Broadcasts/${id}`]) {
-      try {
-        const res = await fetch(url, { method: "DELETE" });
-        if (res.ok) {
-          deleted = true;
-          break;
-        }
-      } catch {}
-    }
+    try {
+      const res = await writeFetch(`/api/broadcasts/${id}`, { method: "DELETE" });
+      if (res.ok) deleted = true;
+    } catch {}
 
     if (deleted) {
       toast.success("Broadcast alert recalled successfully.");

@@ -13,8 +13,6 @@ import { useTheme } from "../../hooks/useTheme";
 import { useDispatch, useSelector } from "react-redux";
 import { SUPPORTED_CURRENCIES, setCurrency } from "../../features/currency/currencySlice";
 
-const API_URL = import.meta.env.VITE_API_URL || "https://localhost:7015/api";
-
 const CURRENCY_DETAILS = {
   INR: { name: "Indian Rupee", nativeName: "रुपया" },
   USD: { name: "US Dollar", nativeName: "Dollar" },
@@ -86,27 +84,12 @@ export const Navbar = () => {
 
   const fetchNavbarBroadcasts = async () => {
     try {
-      const [externalRes, localRes] = await Promise.allSettled([
-        fetch(`${API_URL}/Broadcasts`),
-        fetch("/api/broadcasts")
-      ]);
+      const res = await fetch("/api/broadcasts");
 
       let all = [];
-      // External API broadcasts
-      if (externalRes.status === "fulfilled" && externalRes.value.ok) {
-        const data = await externalRes.value.json();
-        if (Array.isArray(data)) all.push(...data);
-      }
-      // Local server broadcasts (deduplicate by ID)
-      if (localRes.status === "fulfilled" && localRes.value.ok) {
-        const data = await localRes.value.json();
-        if (Array.isArray(data)) {
-          for (const item of data) {
-            if (!all.some((b) => String(b.id) === String(item.id))) {
-              all.push(item);
-            }
-          }
-        }
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) all = data;
       }
 
       const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;

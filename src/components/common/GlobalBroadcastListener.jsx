@@ -2,8 +2,6 @@ import React, { useEffect, useState } from "react";
 import { toast } from "react-hot-toast";
 import { Megaphone, Bell, Volume2, Award, CheckCircle, ShieldAlert, X } from "lucide-react";
 
-const API_URL = import.meta.env.VITE_API_URL || "https://localhost:7015/api";
-
 export const GlobalBroadcastListener = () => {
   useEffect(() => {
     // Use a separate localStorage key to track which broadcasts have been
@@ -36,25 +34,12 @@ export const GlobalBroadcastListener = () => {
 
     const checkNewBroadcasts = async () => {
       try {
-        const [externalRes, localRes] = await Promise.allSettled([
-          fetch(`${API_URL}/Broadcasts`),
-          fetch("/api/broadcasts")
-        ]);
+        const res = await fetch("/api/broadcasts");
 
         let all = [];
-        if (externalRes.status === "fulfilled" && externalRes.value.ok) {
-          const data = await externalRes.value.json();
-          if (Array.isArray(data)) all.push(...data);
-        }
-        if (localRes.status === "fulfilled" && localRes.value.ok) {
-          const data = await localRes.value.json();
-          if (Array.isArray(data)) {
-            for (const item of data) {
-              if (!all.some((b) => String(b.id) === String(item.id))) {
-                all.push(item);
-              }
-            }
-          }
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data)) all = data;
         }
 
         const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
