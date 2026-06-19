@@ -1,11 +1,13 @@
 import React, { useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Provider, useDispatch } from "react-redux";
+import { GoogleOAuthProvider } from "@react-oauth/google";
 import { store } from "./app/store";
 import { fetchCartThunk } from "./features/cart/cartSlice";
 import ThemeProvider from "./context/ThemeContext";
 import { CompareProvider } from "./context/CompareContext";
-import GlobalBroadcastListener from "./components/common/GlobalBroadcastListener";
+import { BroadcastProvider } from "./context/BroadcastContext";
+import { GlobalBroadcastListener } from "./components/common/GlobalBroadcastListener";
 import AISphereButler from "./components/common/AISphereButler";
 import ProductCompareTray from "./components/products/ProductCompareTray";
 import ProductCompareModal from "./components/products/ProductCompareModal";
@@ -65,6 +67,8 @@ export default function App() {
       <ThemeProvider>
         <CompareProvider>
           <BrowserRouter>
+            <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID || ""}>
+            <BroadcastProvider>
             <Routes>
               
               {/* 1. Main Storefront Pages & Layout */}
@@ -123,6 +127,8 @@ export default function App() {
             <AISphereButler />
             <ProductCompareTray />
             <ProductCompareModal />
+            </BroadcastProvider>
+            </GoogleOAuthProvider>
           </BrowserRouter>
         </CompareProvider>
       </ThemeProvider>

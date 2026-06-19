@@ -5,6 +5,7 @@ import { useDispatch } from "react-redux";
 import { setCredentials } from "../../features/auth/authSlice";
 import { Button } from "../../components/common/Button";
 import { Input } from "../../components/common/Input";
+import { GoogleSignInButton } from "../../components/auth/GoogleSignInButton";
 import { axiosInstance } from "../../services/api";
 import { toast } from "react-hot-toast";
 
@@ -34,7 +35,7 @@ export const Login = () => {
 
       try {
         // Try external .NET API first (dynamic: real database)
-        const response = await fetch(`${API_URL}/Auth/login`, {
+        const response = await fetch(`${API_URL}auth/login`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email: email.trim(), password }),
@@ -127,6 +128,8 @@ export const Login = () => {
           Continue to Store
         </Button>
       </form>
+
+      <GoogleSignInButton mode="login" />
 
       <p className="text-xs text-gray-500 text-center">
         New to premium store?{" "}

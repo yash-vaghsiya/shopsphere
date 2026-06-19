@@ -5,6 +5,7 @@ import { useDispatch } from "react-redux";
 import { setCredentials } from "../../features/auth/authSlice";
 import { Button } from "../../components/common/Button";
 import { Input } from "../../components/common/Input";
+import { GoogleSignInButton } from "../../components/auth/GoogleSignInButton";
 import { axiosInstance } from "../../services/api";
 import { toast } from "react-hot-toast";
 
@@ -152,6 +153,8 @@ export const Register = () => {
           Create My Account
         </Button>
       </form>
+
+      <GoogleSignInButton mode="signup" />
 
       <p className="text-xs text-gray-500 text-center">
         Already a ShopSphere patron?{" "}
