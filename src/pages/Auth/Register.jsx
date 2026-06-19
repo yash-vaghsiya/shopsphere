@@ -1,4 +1,4 @@
-﻿import React, { useState } from "react";
+import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { UserPlus } from "lucide-react";
 import { useDispatch } from "react-redux";
@@ -14,14 +14,16 @@ export const Register = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
 
-  const [name, setName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!name.trim() || !email.trim() || !password.trim()) {
+    if (!firstName.trim() || !email.trim() || !password.trim()) {
       toast.error("Please fill in all details.");
       return;
     }
@@ -32,40 +34,45 @@ export const Register = () => {
       let normalizedUser;
 
       try {
-        // Try external .NET API first
+        // Try external .NET API first (dynamic: real database)
         const response = await fetch(`${API_URL}/Auth/register`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            firstName: name.trim(),
-            lastName: "",
+            firstName: firstName.trim(),
+            lastName: lastName.trim(),
+            phone: phone.trim(),
             email: email.trim(),
             password,
           }),
         });
 
-        data = await response.json();
-
         if (!response.ok) {
-          throw new Error(data.message || data.title || "Registration failed.");
+          throw new Error('External API rejected');
         }
+
+        data = await response.json();
 
         normalizedUser = {
           ...data.user,
-          name: data.user.name || (data.user.firstName ? `${data.user.firstName} ${data.user.lastName || ''}`.trim() : name.trim()),
+          name: data.user.name || `${firstName.trim()} ${lastName.trim()}`.trim(),
+          phone: data.user.phone || phone.trim(),
           role: data.user.role || 'Customer',
         };
       } catch (externalError) {
-        // Fallback to local mock server
+        // Fallback to local mock server if external API is unreachable
         const response = await axiosInstance.post("/api/auth/register", {
-          name: name.trim(),
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          phone: phone.trim(),
           email: email.trim(),
           password,
         });
         data = response.data;
         normalizedUser = {
           ...data.user,
-          name: data.user.name || name.trim(),
+          name: data.user.name || `${firstName.trim()} ${lastName.trim()}`.trim(),
+          phone: data.user.phone || phone.trim(),
           role: data.user.role || 'Customer',
         };
       }
@@ -77,7 +84,8 @@ export const Register = () => {
       toast.success("Registration complete! Welcome aboard ShopSphere.");
       navigate("/");
     } catch (error) {
-      toast.error(error.message || "Unable to connect to server.");
+      const msg = error.response?.data?.message || error.message || "Unable to connect to server.";
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -95,13 +103,21 @@ export const Register = () => {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        <Input
-          label="Full Name *"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="John Doe"
-          required
-        />
+        <div className="grid grid-cols-2 gap-3">
+          <Input
+            label="First Name *"
+            value={firstName}
+            onChange={(e) => setFirstName(e.target.value)}
+            placeholder="John"
+            required
+          />
+          <Input
+            label="Last Name"
+            value={lastName}
+            onChange={(e) => setLastName(e.target.value)}
+            placeholder="Doe"
+          />
+        </div>
         <Input
           label="Email address *"
           type="email"
@@ -110,28 +126,35 @@ export const Register = () => {
           placeholder="john@example.com"
           required
         />
+        <Input
+          label="Phone Number"
+          type="tel"
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          placeholder="+1 234 567 8900"
+        />
         <div className="space-y-1">
           <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-            Secure Password *
+            Password *
           </label>
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="•••••••• (Min 6 characters)"
+            placeholder="••••••••"
             required
-            className="mt-1 block h-10 w-full px-3.5 bg-white dark:bg-gray-955 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 outline-none transition-colors"
+            className="mt-1 block h-10 w-full px-3.5 bg-white dark:bg-gray-950 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 outline-none transition-colors"
           />
         </div>
 
         <Button type="submit" loading={loading} className="w-full h-11 text-xs">
           <UserPlus size={14} className="mr-2" />
-          Create Account
+          Create My Account
         </Button>
       </form>
 
-      <p className="text-xs text-gray-450 text-center">
-        Already a premium member?{" "}
+      <p className="text-xs text-gray-500 text-center">
+        Already a ShopSphere patron?{" "}
         <Link to="/login" className="text-blue-600 hover:underline font-bold">
           Sign In
         </Link>

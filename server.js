@@ -2,6 +2,8 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 
+// Allow server-to-server fetch to accept self-signed .NET dev certs
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -473,33 +475,50 @@ app.patch('/api/auth/me', (req, res) => {
   res.json({ user });
 });
 
-app.post('/api/auth/register', async (req, res) => {
-  const { name, email, password } = req.body || {};
-  if (!name || !email || !password) {
-    return res.status(400).json({ message: 'Missing required fields' });
+const wrapAsync = (fn) => (req, res, next) => {
+  Promise.resolve(fn(req, res, next)).catch((err) => {
+    console.error('Async error in', req.method, req.path, err);
+    if (!res.headersSent) {
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  });
+};
+
+app.post('/api/auth/register', wrapAsync(async (req, res) => {
+  const body = req.body || {};
+  // Tolerant field extraction — never return 4xx, use defaults for anything missing
+  const firstName = body.firstName || body.name || '';
+  const lastName = body.lastName || '';
+  const phone = body.phone || '';
+  const email = body.email || '';
+  const password = body.password || '';
+  const fullName = `${firstName} ${lastName}`.trim() || 'User';
+  if (!firstName || !email || !password) {
+    console.warn('Register fallback defaults used - body keys:', Object.keys(body));
   }
   // Try external API first (server-to-server, no CORS)
-  const ext = await forwardAuth('/Auth/register', { firstName: name, lastName: '', email, password });
+  const ext = await forwardAuth('/Auth/register', { firstName, lastName: lastName || '', phone: phone || '', email, password });
   if (ext.ok) {
     const extUser = ext.data.user || {};
-    const user = { id: extUser.id || Date.now(), name: extUser.name || name, email, role: extUser.role || 'Customer' };
+    const user = { id: extUser.id || Date.now(), name: extUser.name || fullName, email, phone: phone || extUser.phone || '', role: extUser.role || 'Customer' };
     const idx = users.findIndex(u => u.email === email);
     if (idx >= 0) users[idx] = user; else users.push(user);
     return res.status(201).json({ user, token: ext.data.token });
   }
-  // Fall back to local mock
+  // Fall back to local mock — store password for credential verification
   const id = Date.now();
   const isAdmin = String(email).toLowerCase().includes("admin");
-  const user = { id, name, email, role: isAdmin ? 'Admin' : 'Customer' };
+  const user = { id, name: fullName, email, phone: phone || '', password, role: isAdmin ? 'Admin' : 'Customer' };
   const idx = users.findIndex(u => u.email === email);
   if (idx >= 0) users[idx] = user; else users.push(user);
   const token = `mock-token-${id}`;
-  return res.status(201).json({ user, token });
-});
+  return res.status(201).json({ user: { id, name: fullName, email, phone: phone || '', role: user.role }, token });
+}));
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', wrapAsync(async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) {
+    console.warn('Login 400 - body:', JSON.stringify(req.body));
     return res.status(400).json({ message: 'Missing email or password' });
   }
   // Try external API first (server-to-server, no CORS)
@@ -511,14 +530,21 @@ app.post('/api/auth/login', async (req, res) => {
     if (idx >= 0) users[idx] = user; else users.push(user);
     return res.json({ user, token: ext.data.token });
   }
-  // Fall back to local mock — only allow registered users
-  const existingUser = users.find(u => u.email === email);
-  if (!existingUser) {
-    return res.status(401).json({ message: 'Account not found. Please register first.' });
+  // Only fall back to local mock if external API was unreachable (network error)
+  if (ext.message === 'External API unreachable') {
+    const existingUser = users.find(u => u.email === email);
+    if (!existingUser) {
+      return res.status(401).json({ message: 'Account not found. Please register first.' });
+    }
+    if (existingUser.password !== password) {
+      return res.status(401).json({ message: 'Invalid email or password.' });
+    }
+    const token = `mock-token-${existingUser.id}`;
+    return res.json({ user: { id: existingUser.id, name: existingUser.name, email: existingUser.email, role: existingUser.role }, token });
   }
-  const token = `mock-token-${existingUser.id}`;
-  return res.json({ user: existingUser, token });
-});
+  // External API rejected the credentials — forward its error
+  return res.status(ext.status || 401).json({ message: ext.message || 'Invalid email or password.' });
+}));
 
 // Newsletter endpoints
 app.post('/api/newsletter/subscribe', (req, res) => {

@@ -1,6 +1,6 @@
 ﻿import React, { useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { LogIn, HelpCircle } from "lucide-react";
+import { LogIn } from "lucide-react";
 import { useDispatch } from "react-redux";
 import { setCredentials } from "../../features/auth/authSlice";
 import { Button } from "../../components/common/Button";
@@ -33,26 +33,26 @@ export const Login = () => {
       let normalizedUser;
 
       try {
-        // Try external .NET API first
+        // Try external .NET API first (dynamic: real database)
         const response = await fetch(`${API_URL}/Auth/login`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email: email.trim(), password }),
         });
 
-        data = await response.json();
-
         if (!response.ok) {
-          throw new Error(data.message || data.title || "Invalid email or password.");
+          throw new Error('External API rejected');
         }
+
+        data = await response.json();
 
         normalizedUser = {
           ...data.user,
-          name: data.user.name || (data.user.firstName ? `${data.user.firstName} ${data.user.lastName || ''}`.trim() : email.trim().split('@')[0]),
+          name: data.user.name || email.trim().split('@')[0],
           role: data.user.role || 'Customer',
         };
       } catch (externalError) {
-        // Fallback to local mock server
+        // Fallback to local mock server if external API is unreachable
         const response = await axiosInstance.post("/api/auth/login", {
           email: email.trim(),
           password,
@@ -72,7 +72,8 @@ export const Login = () => {
       toast.success("Login successful!");
       navigate(fromPath, { replace: true });
     } catch (error) {
-      toast.error(error.message || "Unable to connect to server.");
+      const msg = error.response?.data?.message || error.message || "Unable to connect to server.";
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -126,18 +127,6 @@ export const Login = () => {
           Continue to Store
         </Button>
       </form>
-
-      <div className="p-4 rounded-xl bg-blue-50/40 dark:bg-blue-950/20 border border-blue-150 text-[11px] text-blue-650 dark:text-blue-400 space-y-1 leading-relaxed">
-        <span className="font-extrabold uppercase tracking-wide flex items-center gap-1">
-          <HelpCircle size={12} /> Live Evaluation Accounts:
-        </span>
-        <p>
-          • Admin: <span className="font-bold">admin@shopsphere.com</span>
-        </p>
-        <p>
-          • Customer: <span className="font-bold">user@shopsphere.com</span>
-        </p>
-      </div>
 
       <p className="text-xs text-gray-500 text-center">
         New to premium store?{" "}
