@@ -546,14 +546,14 @@ app.post('/api/auth/login', wrapAsync(async (req, res) => {
   return res.status(ext.status || 401).json({ message: ext.message || 'Invalid email or password.' });
 }));
 
-// Google OAuth (Sign In With Google) — same dual-flow pattern
+// Google OAuth (Sign In With Google)
 app.post('/api/auth/google', wrapAsync(async (req, res) => {
-  const { credential } = req.body || {};
+  const { credential, formData } = req.body || {};
   if (!credential) {
     return res.status(400).json({ message: 'Google credential is required' });
   }
 
-  // Verify credential via Google's tokeninfo endpoint
+  // Verify ID token via Google's tokeninfo endpoint
   let payload;
   try {
     const verifyRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${credential}`);
@@ -569,14 +569,12 @@ app.post('/api/auth/google', wrapAsync(async (req, res) => {
     return res.status(401).json({ message: 'Email not verified with Google' });
   }
 
-  const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID;
-  if (GOOGLE_CLIENT_ID && payload.aud !== GOOGLE_CLIENT_ID) {
-    return res.status(401).json({ message: 'Token audience mismatch' });
-  }
-
   // Find existing user or create new one
-  const email = payload.email;
-  const name = payload.name || email.split('@')[0];
+  const email = formData?.email || payload.email;
+  const firstName = formData?.firstName || payload.name || email.split('@')[0];
+  const lastName = formData?.lastName || '';
+  const phone = formData?.phone || '';
+  const name = `${firstName} ${lastName}`.trim() || email.split('@')[0];
   let user = users.find(u => u.email === email);
   if (!user) {
     const id = Date.now();
@@ -584,7 +582,7 @@ app.post('/api/auth/google', wrapAsync(async (req, res) => {
       id,
       name,
       email,
-      phone: '',
+      phone,
       password: `google_${id}`,
       role: 'Customer',
       picture: payload.picture || '',
@@ -595,10 +593,10 @@ app.post('/api/auth/google', wrapAsync(async (req, res) => {
   }
 
   // Forward to the external .NET API's register endpoint so data is stored in the database
-  const ext = await forwardAuth('/Auth/register', {
-    firstName: name,
-    lastName: '',
-    phone: '',
+  await forwardAuth('/Auth/register', {
+    firstName,
+    lastName,
+    phone,
     email,
     password: user.password,
   });

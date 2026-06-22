@@ -18,7 +18,7 @@ const GoogleIcon = () => (
   </svg>
 );
 
-export const GoogleSignInButton = ({ mode = "login" }) => {
+export const GoogleSignInButton = ({ mode = "login", disabled = false, formData = {} }) => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const location = useLocation();
@@ -28,6 +28,7 @@ export const GoogleSignInButton = ({ mode = "login" }) => {
     try {
       const res = await axiosInstance.post("/api/auth/google", {
         credential: credentialResponse.credential,
+        ...(mode === "signup" && Object.values(formData).some(v => v) ? { formData } : {}),
       });
       const data = res.data;
 
@@ -56,16 +57,27 @@ export const GoogleSignInButton = ({ mode = "login" }) => {
       </div>
 
       {GOOGLE_CLIENT_ID ? (
-        <GoogleLogin
-          theme="outline"
-          size="large"
-          text={mode === "login" ? "signin_with" : "signup_with"}
-          shape="rectangular"
-          width="100%"
-          logo_alignment="left"
-          onSuccess={handleGoogleSuccess}
-          onError={() => toast.error("Google sign-in failed. Please try again.")}
-        />
+        disabled && mode === "signup" ? (
+          <button
+            onClick={() => toast.error("Please fill in all fields before signing up with Google.")}
+            type="button"
+            className="w-full flex items-center justify-center gap-3 py-2.5 px-4 rounded-xl border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-900 text-sm font-semibold text-gray-400 dark:text-gray-600 cursor-not-allowed transition-all"
+          >
+            <GoogleIcon />
+            <span>{label}</span>
+          </button>
+        ) : (
+          <GoogleLogin
+            theme="outline"
+            size="large"
+            text={mode === "login" ? "signin_with" : "signup_with"}
+            shape="rectangular"
+            width="100%"
+            logo_alignment="left"
+            onSuccess={handleGoogleSuccess}
+            onError={() => toast.error("Google sign-in failed. Please try again.")}
+          />
+        )
       ) : (
         <button
           onClick={() => toast.error("Set VITE_GOOGLE_CLIENT_ID in .env to enable Google Sign-In")}

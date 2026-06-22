@@ -154,7 +154,11 @@ export const Register = () => {
         </Button>
       </form>
 
-      <GoogleSignInButton mode="signup" />
+      <GoogleSignInButton
+        mode="signup"
+        disabled={!firstName.trim() || !email.trim() || !password.trim() || !phone.trim() || !lastName.trim()}
+        formData={{ firstName: firstName.trim(), lastName: lastName.trim(), phone: phone.trim(), email: email.trim() }}
+      />
 
       <p className="text-xs text-gray-500 text-center">
         Already a ShopSphere patron?{" "}
