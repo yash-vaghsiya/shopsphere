@@ -546,6 +546,59 @@ app.post('/api/auth/login', wrapAsync(async (req, res) => {
   return res.status(ext.status || 401).json({ message: ext.message || 'Invalid email or password.' });
 }));
 
+// Google OAuth (Sign In With Google) — same dual-flow pattern
+app.post('/api/auth/google', wrapAsync(async (req, res) => {
+  const { credential } = req.body || {};
+  if (!credential) {
+    return res.status(400).json({ message: 'Google credential is required' });
+  }
+
+  // Verify credential via Google's tokeninfo endpoint
+  let payload;
+  try {
+    const verifyRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${credential}`);
+    if (!verifyRes.ok) {
+      return res.status(401).json({ message: 'Invalid Google credential' });
+    }
+    payload = await verifyRes.json();
+  } catch {
+    return res.status(502).json({ message: 'Failed to verify Google credential' });
+  }
+
+  if (!payload.email || payload.email_verified !== 'true') {
+    return res.status(401).json({ message: 'Email not verified with Google' });
+  }
+
+  const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID;
+  if (GOOGLE_CLIENT_ID && payload.aud !== GOOGLE_CLIENT_ID) {
+    return res.status(401).json({ message: 'Token audience mismatch' });
+  }
+
+  // Find existing user or create new one
+  const email = payload.email;
+  let user = users.find(u => u.email === email);
+  if (!user) {
+    const id = Date.now();
+    user = {
+      id,
+      name: payload.name || email.split('@')[0],
+      email,
+      phone: '',
+      password: `google_${id}`,
+      role: 'Customer',
+      picture: payload.picture || '',
+      createdAt: new Date().toISOString(),
+    };
+    users.push(user);
+  }
+
+  const token = `mock-token-${user.id}`;
+  return res.json({
+    token,
+    user: { id: user.id, email: user.email, name: user.name, role: user.role, picture: user.picture || '' },
+  });
+}));
+
 // Newsletter endpoints
 app.post('/api/newsletter/subscribe', (req, res) => {
   const { email } = req.body || {};

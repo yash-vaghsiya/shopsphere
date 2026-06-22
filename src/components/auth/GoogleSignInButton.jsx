@@ -9,6 +9,15 @@ import { toast } from "react-hot-toast";
 const API_URL = import.meta.env.VITE_API_URL || "https://localhost:7015/api";
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
+const GoogleIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+    <path d="M17.64 9.2c0-.64-.06-1.25-.17-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92a8.78 8.78 0 0 0 2.68-6.62z" fill="#4285F4"/>
+    <path d="M9 18a8.6 8.6 0 0 0 5.96-2.18l-2.92-2.26a5.4 5.4 0 0 1-8.08-2.84H.96v2.34A9 9 0 0 0 9 18z" fill="#34A853"/>
+    <path d="M3.96 10.72a5.4 5.4 0 0 1 0-3.44V4.94H.96a9 9 0 0 0 0 8.12l3-2.34z" fill="#FBBC05"/>
+    <path d="M9 3.6a4.9 4.9 0 0 1 3.46 1.36l2.6-2.6A8.7 8.7 0 0 0 9 0a9 9 0 0 0-8.04 4.94l3 2.34A5.36 5.36 0 0 1 9 3.6z" fill="#EA4335"/>
+  </svg>
+);
+
 export const GoogleSignInButton = ({ mode = "login" }) => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
@@ -19,7 +28,6 @@ export const GoogleSignInButton = ({ mode = "login" }) => {
     try {
       let data;
 
-      // Dynamic dual-flow: try external .NET API first, fall back to local Express
       try {
         const res = await fetch(API_URL + "/Auth/google", {
           method: "POST",
@@ -49,20 +57,7 @@ export const GoogleSignInButton = ({ mode = "login" }) => {
     }
   };
 
-  if (!GOOGLE_CLIENT_ID) {
-    return (
-      <div className="w-full">
-        <div className="relative flex items-center gap-3 my-3">
-          <span className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
-          <span className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider shrink-0">or continue with</span>
-          <span className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
-        </div>
-        <div className="w-full py-2.5 px-4 rounded-xl border border-dashed border-gray-300 dark:border-gray-700 text-center text-[11px] font-bold text-gray-400 dark:text-gray-500 select-none">
-          Google Sign-In requires VITE_GOOGLE_CLIENT_ID in .env
-        </div>
-      </div>
-    );
-  }
+  const label = mode === "login" ? "Sign in with Google" : "Sign up with Google";
 
   return (
     <div className="w-full">
@@ -72,16 +67,27 @@ export const GoogleSignInButton = ({ mode = "login" }) => {
         <span className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
       </div>
 
-      <GoogleLogin
-        theme="outline"
-        size="large"
-        text={mode === "login" ? "signin_with" : "signup_with"}
-        shape="rectangular"
-        width="100%"
-        logo_alignment="left"
-        onSuccess={handleGoogleSuccess}
-        onError={() => toast.error("Google sign-in failed. Please try again.")}
-      />
+      {GOOGLE_CLIENT_ID ? (
+        <GoogleLogin
+          theme="outline"
+          size="large"
+          text={mode === "login" ? "signin_with" : "signup_with"}
+          shape="rectangular"
+          width="100%"
+          logo_alignment="left"
+          onSuccess={handleGoogleSuccess}
+          onError={() => toast.error("Google sign-in failed. Please try again.")}
+        />
+      ) : (
+        <button
+          onClick={() => toast.error("Set VITE_GOOGLE_CLIENT_ID in .env to enable Google Sign-In")}
+          type="button"
+          className="w-full flex items-center justify-center gap-3 py-2.5 px-4 rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 hover:bg-gray-50 dark:hover:bg-gray-900 text-sm font-semibold text-gray-700 dark:text-gray-300 transition-all cursor-pointer"
+        >
+          <GoogleIcon />
+          <span>{label}</span>
+        </button>
+      )}
     </div>
   );
 };

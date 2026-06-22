@@ -67,7 +67,7 @@ export default function App() {
       <ThemeProvider>
         <CompareProvider>
           <BrowserRouter>
-            <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID || ""}>
+            <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID}>
             <BroadcastProvider>
             <Routes>
               
