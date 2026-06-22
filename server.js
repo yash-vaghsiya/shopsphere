@@ -576,12 +576,13 @@ app.post('/api/auth/google', wrapAsync(async (req, res) => {
 
   // Find existing user or create new one
   const email = payload.email;
+  const name = payload.name || email.split('@')[0];
   let user = users.find(u => u.email === email);
   if (!user) {
     const id = Date.now();
     user = {
       id,
-      name: payload.name || email.split('@')[0],
+      name,
       email,
       phone: '',
       password: `google_${id}`,
@@ -590,7 +591,17 @@ app.post('/api/auth/google', wrapAsync(async (req, res) => {
       createdAt: new Date().toISOString(),
     };
     users.push(user);
+    saveJson(USERS_FILE, users);
   }
+
+  // Forward to the external .NET API's register endpoint so data is stored in the database
+  const ext = await forwardAuth('/Auth/register', {
+    firstName: name,
+    lastName: '',
+    phone: '',
+    email,
+    password: user.password,
+  });
 
   const token = `mock-token-${user.id}`;
   return res.json({

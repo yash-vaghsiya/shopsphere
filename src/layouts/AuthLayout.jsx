@@ -13,7 +13,7 @@ export const AuthLayout = () => {
       <div className="absolute top-6 left-6 z-10">
         <Link
           to="/"
-          className="inline-flex items-center gap-1.5 text-xs font-black uppercase text-gray-400 hover:text-blue-600 transition-colors"
+          className="fixed inline-flex items-center gap-1.5 text-lx font-black uppercase text-BLACK-400 hover:text-blue-600 transition-colors"
         >
           <ArrowLeft size={14} />
           Back To Store

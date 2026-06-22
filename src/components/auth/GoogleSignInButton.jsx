@@ -26,22 +26,10 @@ export const GoogleSignInButton = ({ mode = "login" }) => {
 
   const handleGoogleSuccess = async (credentialResponse) => {
     try {
-      let data;
-
-      try {
-        const res = await fetch(API_URL + "/Auth/google", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ credential: credentialResponse.credential }),
-        });
-        if (!res.ok) throw new Error("External API rejected");
-        data = await res.json();
-      } catch (externalError) {
-        const res = await axiosInstance.post("/api/auth/google", {
-          credential: credentialResponse.credential,
-        });
-        data = res.data;
-      }
+      const res = await axiosInstance.post("/api/auth/google", {
+        credential: credentialResponse.credential,
+      });
+      const data = res.data;
 
       localStorage.setItem("token", data.token);
       localStorage.setItem("user", JSON.stringify(data.user));
