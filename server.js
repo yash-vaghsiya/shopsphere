@@ -580,8 +580,9 @@ app.post('/api/auth/google', wrapAsync(async (req, res) => {
   if (!user && mode !== "signup") {
     // User not found locally — check the external .NET API database
     const ext = await forwardAuth('/Auth/login', { email, password: '__google_check__' });
-    if (ext.ok || ext.status === 401) {
-      // User exists in external API (status 401 means email found but password wrong — expected)
+    const notFound = ext.status === 404 || (ext.message && /not found|not exist|not registered|unreachable/i.test(ext.message));
+    if (ext.ok || (ext.status && !notFound)) {
+      // User exists in external API (any non-404 response means the email was recognized)
       user = {
         id: ext.data?.user?.id || Date.now(),
         name: ext.data?.user?.name || name,
