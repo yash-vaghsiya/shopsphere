@@ -67,28 +67,42 @@ export const AdminProducts = () => {
 
     try {
       setSaving(true);
-      const res = await fetch(`/api/products/${editingProduct.id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: editName.trim(),
-          stock: parseInt(editStock),
-          price: parseFloat(editPrice),
-          category: editCategory.trim(),
-          brand: editBrand.trim(),
-          description: editDescription.trim(),
-          image: editImage.trim() || undefined,
-        }),
-      });
+      const API_URL = import.meta.env.VITE_API_URL || "https://localhost:7015/api";
+      const body = {
+        name: editName.trim(),
+        stock: parseInt(editStock),
+        price: parseFloat(editPrice),
+        category: editCategory.trim(),
+        brand: editBrand.trim(),
+        description: editDescription.trim(),
+        image: editImage.trim() || undefined,
+      };
+
+      let res;
+      try {
+        res = await fetch(`${API_URL}/Products/${editingProduct.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      } catch {
+        res = null;
+      }
+
+      if (!res || !res.ok) {
+        res = await fetch(`/api/products/${editingProduct.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      }
 
       if (res.ok) {
         toast.success(`Product stock and configurations updated for "${editName}"!`);
         setEditingProduct(null);
         dispatch(fetchProductsThunk({}));
       } else {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         toast.error(data.message || "Could not update target product configurations");
       }
     } catch (err) {

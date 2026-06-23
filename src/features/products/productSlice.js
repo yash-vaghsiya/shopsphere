@@ -1,6 +1,8 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import { axiosInstance } from "../../services/api";
 
+const API_URL = import.meta.env.VITE_API_URL || "https://localhost:7015/api";
+
 const initialState = {
   products: [],
   featuredProducts: [],
@@ -16,8 +18,12 @@ export const fetchProductsThunk = createAsyncThunk(
   "products/fetchProducts",
   async (params, thunkAPI) => {
     try {
+      const response = await fetch(`${API_URL}/Products`);
+      if (response.ok) return await response.json();
+    } catch {}
+    try {
       const response = await axiosInstance.get("/api/products", { params });
-      return response.data; // Expected: Product[]
+      return response.data;
     } catch (error) {
       return thunkAPI.rejectWithValue(
         error.response?.data?.message || "Failed to load products"
@@ -44,6 +50,14 @@ export const createProductThunk = createAsyncThunk(
   "products/createProduct",
   async (productData, thunkAPI) => {
     try {
+      const response = await fetch(`${API_URL}/Products`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(productData),
+      });
+      if (response.ok) return await response.json();
+    } catch {}
+    try {
       const response = await axiosInstance.post("/api/products", productData);
       return response.data;
     } catch (error) {
@@ -57,6 +71,10 @@ export const createProductThunk = createAsyncThunk(
 export const deleteProductThunk = createAsyncThunk(
   "products/deleteProduct",
   async (id, thunkAPI) => {
+    try {
+      const response = await fetch(`${API_URL}/Products/${id}`, { method: "DELETE" });
+      if (response.ok) return id;
+    } catch {}
     try {
       await axiosInstance.delete(`/api/products/${id}`);
       return id;
