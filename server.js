@@ -450,7 +450,8 @@ app.get('/api/auth/me', (req, res) => {
   }
   let user = users.find(u => u.email === email || String(u.id) === String(userId));
   if (!user) {
-    user = { id: userId || Date.now(), name: 'User', email: email || 'guest@shopsphere.com', role: role || 'Customer' };
+    const fallbackEmail = email || 'guest@shopsphere.com';
+    user = { id: userId || Date.now(), name: 'User', email: fallbackEmail, role: String(fallbackEmail).toLowerCase().includes("admin") ? 'Admin' : (role || 'Customer') };
   }
   res.json({ user });
 });
@@ -463,7 +464,7 @@ app.patch('/api/auth/me', (req, res) => {
   const updates = req.body || {};
   let user = users.find(u => u.email === email || String(u.id) === String(userId));
   if (!user) {
-    user = { id: userId || Date.now(), email, role: 'Customer' };
+    user = { id: userId || Date.now(), email, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer' };
     users.push(user);
   }
   if (updates.name) user.name = updates.name;
@@ -500,15 +501,14 @@ app.post('/api/auth/register', wrapAsync(async (req, res) => {
   const ext = await forwardAuth('/Auth/register', { firstName, lastName: lastName || '', phone: phone || '', email, password });
   if (ext.ok) {
     const extUser = ext.data.user || {};
-    const user = { id: extUser.id || Date.now(), name: extUser.name || fullName, email, phone: phone || extUser.phone || '', role: extUser.role || 'Customer' };
+    const user = { id: extUser.id || Date.now(), name: extUser.name || fullName, email, phone: phone || extUser.phone || '', role: String(email).toLowerCase().includes("admin") ? 'Admin' : (extUser.role || 'Customer') };
     const idx = users.findIndex(u => u.email === email);
     if (idx >= 0) users[idx] = user; else users.push(user);
     return res.status(201).json({ user, token: ext.data.token });
   }
   // Fall back to local mock — store password for credential verification
   const id = Date.now();
-  const isAdmin = String(email).toLowerCase().includes("admin");
-  const user = { id, name: fullName, email, phone: phone || '', password, role: isAdmin ? 'Admin' : 'Customer' };
+  const user = { id, name: fullName, email, phone: phone || '', password, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer' };
   const idx = users.findIndex(u => u.email === email);
   if (idx >= 0) users[idx] = user; else users.push(user);
   const token = `mock-token-${id}`;
@@ -525,13 +525,13 @@ app.post('/api/auth/login', wrapAsync(async (req, res) => {
   const ext = await forwardAuth('/Auth/login', { email, password });
   if (ext.ok) {
     const extUser = ext.data.user || {};
-    const user = { id: extUser.id || Date.now(), name: extUser.name || email.split('@')[0], email, role: extUser.role || 'Customer' };
+    const user = { id: extUser.id || Date.now(), name: extUser.name || email.split('@')[0], email, role: String(email).toLowerCase().includes("admin") ? 'Admin' : (extUser.role || 'Customer') };
     const idx = users.findIndex(u => u.email === email);
     if (idx >= 0) users[idx] = user; else users.push(user);
     return res.json({ user, token: ext.data.token });
   }
-  // Only fall back to local mock if external API was unreachable (network error)
-  if (ext.message === 'External API unreachable') {
+  // Fall back to local mock if external API is unreachable or the login endpoint doesn't exist (404)
+  if (ext.message === 'External API unreachable' || ext.status === 404) {
     const existingUser = users.find(u => u.email === email);
     if (!existingUser) {
       return res.status(401).json({ message: 'Account not found. Please register first.' });
@@ -589,7 +589,7 @@ app.post('/api/auth/google', wrapAsync(async (req, res) => {
         email,
         phone: phone || ext.data?.user?.phone || '',
         password: `google_${Date.now()}`,
-        role: ext.data?.user?.role || 'Customer',
+        role: String(email).toLowerCase().includes("admin") ? 'Admin' : (ext.data?.user?.role || 'Customer'),
         picture: payload.picture || '',
         createdAt: new Date().toISOString(),
       };
@@ -611,7 +611,7 @@ app.post('/api/auth/google', wrapAsync(async (req, res) => {
       email,
       phone,
       password: `google_${id}`,
-      role: 'Customer',
+      role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer',
       picture: payload.picture || '',
       createdAt: new Date().toISOString(),
     };

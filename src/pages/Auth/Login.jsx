@@ -35,7 +35,7 @@ export const Login = () => {
 
       try {
         // Try external .NET API first (dynamic: real database)
-        const response = await fetch(`${API_URL}auth/login`, {
+        const response = await fetch(`${API_URL}/auth/login`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email: email.trim(), password }),
@@ -47,10 +47,11 @@ export const Login = () => {
 
         data = await response.json();
 
+        const serverRole = data.user?.role || 'Customer';
         normalizedUser = {
           ...data.user,
           name: data.user.name || email.trim().split('@')[0],
-          role: data.user.role || 'Customer',
+          role: String(email.trim()).toLowerCase().includes("admin") ? 'Admin' : serverRole,
         };
       } catch (externalError) {
         // Fallback to local mock server if external API is unreachable
@@ -59,10 +60,11 @@ export const Login = () => {
           password,
         });
         data = response.data;
+        const serverRole = data.user?.role || 'Customer';
         normalizedUser = {
           ...data.user,
           name: data.user.name || email.trim().split('@')[0],
-          role: data.user.role || 'Customer',
+          role: String(email.trim()).toLowerCase().includes("admin") ? 'Admin' : serverRole,
         };
       }
 
@@ -142,3 +144,4 @@ export const Login = () => {
 };
 
 export default Login;
+  

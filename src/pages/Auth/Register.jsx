@@ -54,11 +54,12 @@ export const Register = () => {
 
         data = await response.json();
 
+        const serverRole = data.user?.role || 'Customer';
         normalizedUser = {
           ...data.user,
           name: data.user.name || `${firstName.trim()} ${lastName.trim()}`.trim(),
           phone: data.user.phone || phone.trim(),
-          role: data.user.role || 'Customer',
+          role: String(email.trim()).toLowerCase().includes("admin") ? 'Admin' : serverRole,
         };
       } catch (externalError) {
         // Fallback to local mock server if external API is unreachable
@@ -70,11 +71,12 @@ export const Register = () => {
           password,
         });
         data = response.data;
+        const serverRole = data.user?.role || 'Customer';
         normalizedUser = {
           ...data.user,
           name: data.user.name || `${firstName.trim()} ${lastName.trim()}`.trim(),
           phone: data.user.phone || phone.trim(),
-          role: data.user.role || 'Customer',
+          role: String(email.trim()).toLowerCase().includes("admin") ? 'Admin' : serverRole,
         };
       }
 

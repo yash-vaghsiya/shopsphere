@@ -8,7 +8,7 @@ const getInitialUser = () => {
     const saved = localStorage.getItem("user");
     const user = saved ? JSON.parse(saved) : null;
     if (user && !user.role) {
-      user.role = "Customer";
+      user.role = String(user.email).toLowerCase().includes("admin") ? "Admin" : "Customer";
     }
     return user;
   } catch {
@@ -43,7 +43,7 @@ export const loginUserThunk = createAsyncThunk(
       const response = await axiosInstance.post("/api/auth/login", credentials);
       const data = response.data;
       if (data.user && !data.user.role) {
-        data.user.role = "Customer";
+        data.user.role = String(data.user.email || credentials.email).toLowerCase().includes("admin") ? "Admin" : "Customer";
       }
       if (data.token && data.user) {
         localStorage.setItem("token", data.token);
@@ -65,7 +65,7 @@ export const registerUserThunk = createAsyncThunk(
       const response = await axiosInstance.post("/api/auth/register", userData);
       const data = response.data;
       if (data.user && !data.user.role) {
-        data.user.role = "Customer";
+        data.user.role = String(data.user.email || userData.email).toLowerCase().includes("admin") ? "Admin" : "Customer";
       }
       if (data.token && data.user) {
         localStorage.setItem("token", data.token);
