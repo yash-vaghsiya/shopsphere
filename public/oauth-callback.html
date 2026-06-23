@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Signing in...</title></head>
+<body>
+<script>
+  const hash = window.location.hash.substring(1);
+  if (hash) {
+    window.opener.postMessage({ type: "google_oauth", hash: hash }, window.location.origin);
+  }
+  window.close();
+</script>
+Please wait...
+</body>
+</html>

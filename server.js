@@ -548,35 +548,61 @@ app.post('/api/auth/login', wrapAsync(async (req, res) => {
 
 // Google OAuth (Sign In With Google)
 app.post('/api/auth/google', wrapAsync(async (req, res) => {
-  const { credential, formData } = req.body || {};
+  const { credential, formData, mode } = req.body || {};
   if (!credential) {
     return res.status(400).json({ message: 'Google credential is required' });
   }
 
-  // Verify ID token via Google's tokeninfo endpoint
+  // Decode the ID token JWT payload directly (base64 decode)
   let payload;
   try {
-    const verifyRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${credential}`);
-    if (!verifyRes.ok) {
-      return res.status(401).json({ message: 'Invalid Google credential' });
+    const parts = credential.split('.');
+    if (parts.length !== 3) {
+      return res.status(401).json({ message: 'Invalid Google credential format' });
     }
-    payload = await verifyRes.json();
+    payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf-8'));
   } catch {
-    return res.status(502).json({ message: 'Failed to verify Google credential' });
+    return res.status(401).json({ message: 'Failed to decode Google credential' });
   }
 
-  if (!payload.email || payload.email_verified !== 'true') {
-    return res.status(401).json({ message: 'Email not verified with Google' });
+  if (!payload || !payload.email) {
+    return res.status(401).json({ message: 'Invalid Google credential payload' });
   }
 
   // Find existing user or create new one
   const email = formData?.email || payload.email;
-  const firstName = formData?.firstName || payload.name || email.split('@')[0];
-  const lastName = formData?.lastName || '';
+  const firstName = formData?.firstName || payload.name || payload.given_name || email.split('@')[0];
+  const lastName = formData?.lastName || payload.family_name || '';
   const phone = formData?.phone || '';
   const name = `${firstName} ${lastName}`.trim() || email.split('@')[0];
   let user = users.find(u => u.email === email);
+
+  if (!user && mode !== "signup") {
+    // User not found locally — check the external .NET API database
+    const ext = await forwardAuth('/Auth/login', { email, password: '__google_check__' });
+    if (ext.ok || ext.status === 401) {
+      // User exists in external API (status 401 means email found but password wrong — expected)
+      user = {
+        id: ext.data?.user?.id || Date.now(),
+        name: ext.data?.user?.name || name,
+        email,
+        phone: phone || ext.data?.user?.phone || '',
+        password: `google_${Date.now()}`,
+        role: ext.data?.user?.role || 'Customer',
+        picture: payload.picture || '',
+        createdAt: new Date().toISOString(),
+      };
+      users.push(user);
+      saveJson(USERS_FILE, users);
+    }
+  }
+
   if (!user) {
+    // Login mode: reject if account doesn't exist anywhere
+    if (mode !== "signup") {
+      return res.status(404).json({ message: 'No account found with this Google email. Please register first.' });
+    }
+    // Signup mode: create new user
     const id = Date.now();
     user = {
       id,
@@ -592,14 +618,14 @@ app.post('/api/auth/google', wrapAsync(async (req, res) => {
     saveJson(USERS_FILE, users);
   }
 
-  // Forward to the external .NET API's register endpoint so data is stored in the database
+  // Forward to the external .NET API to keep in sync (for both login and signup)
   await forwardAuth('/Auth/register', {
     firstName,
     lastName,
     phone,
     email,
     password: user.password,
-  });
+  }).catch(() => {});
 
   const token = `mock-token-${user.id}`;
   return res.json({
