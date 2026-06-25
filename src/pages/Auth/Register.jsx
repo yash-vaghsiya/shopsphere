@@ -128,6 +128,7 @@ export const Register = () => {
           onChange={(e) => setEmail(e.target.value)}
           placeholder="john@example.com"
           required
+          autoComplete="email"
         />
         <Input
           label="Phone Number"
@@ -146,6 +147,7 @@ export const Register = () => {
             onChange={(e) => setPassword(e.target.value)}
             placeholder="••••••••"
             required
+            autoComplete="new-password"
             className="mt-1 block h-10 w-full px-3.5 bg-white dark:bg-gray-950 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 outline-none transition-colors"
           />
         </div>

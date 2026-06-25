@@ -7,12 +7,14 @@ import { axiosInstance } from "../../services/api";
 import { toast } from "react-hot-toast";
 
 // Suppress Google Identity Services internal diagnostic noise
-const gsiLog = console.log;
-console.log = (...args) => {
-  if (typeof args[0] === "string" && args[0].includes("[GSI_LOGGER]")) return;
-  if (typeof args[0] === "string" && args[0].includes("Cross-Origin-Opener-Policy")) return;
-  gsiLog(...args);
-};
+['log','warn','error'].forEach(m => {
+  const orig = console[m];
+  console[m] = (...args) => {
+    if (typeof args[0] === "string" && (args[0].includes("[GSI_LOGGER]") || args[0].includes("Cross-Origin-Opener-Policy"))) return;
+    if (typeof args[0] === "string" && args[0].includes("Provided button width is invalid")) return;
+    orig(...args);
+  };
+});
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
@@ -61,16 +63,17 @@ export const GoogleSignInButton = ({ mode = "login", disabled = false, formData 
             <span>{label}</span>
           </button>
         ) : (
-          <GoogleLogin
-            theme="outline"
-            size="large"
-            text={mode === "login" ? "signin_with" : "signup_with"}
-            shape="rectangular"
-            width="100%"
-            logo_alignment="left"
-            onSuccess={handleGoogleSuccess}
-            onError={() => toast.error("Google sign-in failed. Please try again.")}
-          />
+          <div className="w-full [&>div]:!w-full">
+            <GoogleLogin
+              theme="outline"
+              size="large"
+              text={mode === "login" ? "signin_with" : "signup_with"}
+              shape="rectangular"
+              logo_alignment="left"
+              onSuccess={handleGoogleSuccess}
+              onError={() => toast.error("Google sign-in failed. Please try again.")}
+            />
+          </div>
         )
       ) : (
         <button

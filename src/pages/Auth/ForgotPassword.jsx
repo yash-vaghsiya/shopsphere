@@ -59,6 +59,7 @@ export const ForgotPassword = () => {
             onChange={(e) => setEmail(e.target.value)}
             placeholder="yourname@gmail.com"
             required
+            autoComplete="email"
           />
 
           <Button type="submit" loading={loading} className="w-full py-3.5">
