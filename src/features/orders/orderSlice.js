@@ -1,6 +1,8 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import { axiosInstance } from "../../services/api";
 
+const API_URL = import.meta.env.VITE_API_URL || "https://localhost:7015/api";
+
 const initialState = {
   orders: [],
   currentOrder: null,
@@ -8,12 +10,44 @@ const initialState = {
   error: null,
 };
 
+const unwrapArray = (data) => {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === 'object') {
+    if (Array.isArray(data.$values)) return data.$values;
+    if (Array.isArray(data.value)) return data.value;
+    if (Array.isArray(data.data)) return data.data;
+    if (Array.isArray(data.items)) return data.items;
+    if (Array.isArray(data.orders)) return data.orders;
+    if (Array.isArray(data.records)) return data.records;
+    if (Array.isArray(data.result)) return data.result;
+  }
+  return null;
+};
+
+const normalizeOrder = (o) => ({
+  id: o.id ?? o.Id ?? o.orderId ?? o.OrderId ?? Date.now() + Math.random(),
+  customerName: o.customerName ?? o.CustomerName ?? o.name ?? o.Name ?? o.userName ?? o.UserName ?? '',
+  items: o.items ?? o.Items ?? o.orderItems ?? o.OrderItems ?? [],
+  total: o.total ?? o.Total ?? o.amount ?? o.Amount ?? o.totalAmount ?? o.TotalAmount ?? 0,
+  createdAt: o.createdAt ?? o.CreatedAt ?? o.orderDate ?? o.OrderDate ?? o.date ?? o.Date ?? new Date().toISOString(),
+  status: o.status ?? o.Status ?? 'Pending',
+});
+
 export const fetchOrdersThunk = createAsyncThunk(
   "orders/fetchOrders",
   async (_, thunkAPI) => {
     try {
+      const response = await fetch(`${API_URL}/Orders`);
+      if (response.ok) {
+        const data = await response.json();
+        const arr = unwrapArray(data);
+        if (arr) return arr.map(normalizeOrder);
+      }
+    } catch {}
+    try {
       const response = await axiosInstance.get("/api/orders");
-      return response.data; // Expected: Order[]
+      const arr = Array.isArray(response.data) ? response.data : unwrapArray(response.data) ?? [];
+      return arr.map(normalizeOrder);
     } catch (error) {
       return thunkAPI.rejectWithValue(
         error.response?.data?.message || "Failed to load orders"

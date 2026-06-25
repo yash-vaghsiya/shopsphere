@@ -32,7 +32,7 @@ import {
 import { formatCurrency } from "../../utils/format";
 import { toast } from "react-hot-toast";
 
-export const DashboardVisuals = ({ products = [], orders = [] }) => {
+export const DashboardVisuals = ({ products = [], orders = [], topProducts = [] }) => {
   const [mounted, setMounted] = useState(false);
   const [revenueTimeframe, setRevenueTimeframe] = useState("6m");
   const [hoveredProduct, setHoveredProduct] = useState(null);
@@ -43,39 +43,26 @@ export const DashboardVisuals = ({ products = [], orders = [] }) => {
 
   const handleExportCSV = () => {
     try {
-      // DYNAMIC REVENUE TRENDS & MONTH GENERATOR
-      const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"];
-      const baselineRevenue = [24000, 31000, 28000, 39000, 48000, 52000];
-      const baselineOrders = [12, 18, 14, 25, 30, 35];
+      const exportMonths = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-      const monthlyTimelineData = months.map((m, index) => {
-        return {
-          name: m,
-          revenue: baselineRevenue[index],
-          avgOrderValue: Math.round(baselineRevenue[index] / baselineOrders[index]),
-          orderCount: baselineOrders[index]
-        };
-      });
+      const exportTimeline = exportMonths.map((m) => ({
+        name: m,
+        revenue: 0,
+        avgOrderValue: 0,
+        orderCount: 0,
+      }));
 
-      // Inject active invoices into the calculations
-      orders.forEach(ord => {
+      orders.forEach((ord) => {
         if (ord.status === "Cancelled") return;
         const date = new Date(ord.createdAt);
-        const mIndex = date.getMonth(); // 0 = Jan, 1 = Feb, etc.
-        
-        if (mIndex >= 0 && mIndex < months.length) {
-          monthlyTimelineData[mIndex].revenue += ord.total;
-          monthlyTimelineData[mIndex].orderCount += 1;
-        } else {
-          // default/fallback most recent (Jun)
-          monthlyTimelineData[5].revenue += ord.total;
-          monthlyTimelineData[5].orderCount += 1;
+        const mIndex = date.getMonth();
+        if (mIndex >= 0 && mIndex < exportMonths.length) {
+          exportTimeline[mIndex].revenue += Number(ord.total) || 0;
+          exportTimeline[mIndex].orderCount += 1;
         }
       });
-      
 
-      // Calculate AOV (Average Order Value) after inject
-      monthlyTimelineData.forEach(item => {
+      exportTimeline.forEach((item) => {
         item.avgOrderValue = item.orderCount > 0 ? Math.round(item.revenue / item.orderCount) : 0;
       });
 
@@ -83,7 +70,7 @@ export const DashboardVisuals = ({ products = [], orders = [] }) => {
       const headers = ["Month", "Revenue (INR)", "Order Count", "Average Order Value (INR)"];
       
       // Convert monthly timeline data rows
-      const rows = monthlyTimelineData.map(item => [
+      const rows = exportTimeline.map(item => [
         item.name,
         `INR ${item.revenue}`,
         item.orderCount,
@@ -119,45 +106,33 @@ export const DashboardVisuals = ({ products = [], orders = [] }) => {
     }
   };
 
-  // 1. DYNAMIC REVENUE TRENDS & MONTH GENERATOR
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"];
-  const baselineRevenue = [24000, 31000, 28000, 39000, 48000, 52000];
-  const baselineOrders = [12, 18, 14, 25, 30, 35];
+  // 1. MONTHLY REVENUE TRENDS FROM ORDERS
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-  const monthlyTimelineData = months.map((m, index) => {
-    return {
-      name: m,
-      revenue: baselineRevenue[index],
-      avgOrderValue: Math.round(baselineRevenue[index] / baselineOrders[index]),
-      orderCount: baselineOrders[index]
-    };
-  });
+  const monthlyTimelineData = months.map((m) => ({
+    name: m,
+    revenue: 0,
+    avgOrderValue: 0,
+    orderCount: 0,
+  }));
 
-  // Inject active invoices into the calculations
-  orders.forEach(ord => {
+  orders.forEach((ord) => {
     if (ord.status === "Cancelled") return;
     const date = new Date(ord.createdAt);
-    const mIndex = date.getMonth(); // 0 = Jan, 1 = Feb, etc.
-    
+    const mIndex = date.getMonth();
     if (mIndex >= 0 && mIndex < months.length) {
-      monthlyTimelineData[mIndex].revenue += ord.total;
+      monthlyTimelineData[mIndex].revenue += Number(ord.total) || 0;
       monthlyTimelineData[mIndex].orderCount += 1;
-    } else {
-      // default/fallback most recent (Jun)
-      monthlyTimelineData[5].revenue += ord.total;
-      monthlyTimelineData[5].orderCount += 1;
     }
   });
 
-  // Calculate AOV (Average Order Value) after inject
-  monthlyTimelineData.forEach(item => {
+  monthlyTimelineData.forEach((item) => {
     item.avgOrderValue = item.orderCount > 0 ? Math.round(item.revenue / item.orderCount) : 0;
   });
 
-  // Filter timeframe if user selected 3m
-  const activeTimelineData = revenueTimeframe === "3m" 
-    ? monthlyTimelineData.slice(3) 
-    : monthlyTimelineData;
+  const activeTimelineData = revenueTimeframe === "3m"
+    ? monthlyTimelineData.slice(-3)
+    : monthlyTimelineData.slice(0, 6);
 
   // 2. TOP SELLING PRODUCTS CALCULATOR
   const productSalesMap = {};
@@ -201,6 +176,15 @@ export const DashboardVisuals = ({ products = [], orders = [] }) => {
   const topProductsByRev = [...rawProductsData]
     .sort((a, b) => b.revenue - a.revenue)
     .slice(0, 5);
+
+  // Prefer API data if available
+  const displayTopProducts = topProducts.length > 0
+    ? topProducts.map((p) => ({
+        name: p.name ?? p.productName ?? p.ProductName ?? `Product #${p.productId ?? p.id}`,
+        quantity: p.quantity ?? p.Quantity ?? p.qty ?? p.sold ?? 0,
+        revenue: p.revenue ?? p.Revenue ?? p.total ?? 0,
+      }))
+    : topProductsByQty;
 
   // 3. FULFILLMENT ORDER VOLUME BY STATUS
   const statusCounts = {
@@ -357,7 +341,7 @@ export const DashboardVisuals = ({ products = [], orders = [] }) => {
         <div className="w-full h-72 min-w-0">
           {mounted ? (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={topProductsByQty} layout="vertical" margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+              <BarChart data={displayTopProducts} layout="vertical" margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
                 <XAxis 
                   type="number"
                   stroke="#94a3b8" 
@@ -388,7 +372,7 @@ export const DashboardVisuals = ({ products = [], orders = [] }) => {
                   onMouseEnter={(data) => setHoveredProduct(data.name)}
                   onMouseLeave={() => setHoveredProduct(null)}
                 >
-                  {topProductsByQty.map((entry, index) => (
+                  {displayTopProducts.map((entry, index) => (
                     <Cell 
                       key={`cell-${index}`} 
                       fill={hoveredProduct === entry.name ? "#059669" : "#10b981"}

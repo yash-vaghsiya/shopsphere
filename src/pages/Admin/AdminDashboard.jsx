@@ -5,6 +5,8 @@ import { fetchProductsThunk } from "../../features/products/productSlice";
 import { fetchOrdersThunk } from "../../features/orders/orderSlice";
 import { DashboardCards, OrdersTable } from "../../components/admin/AdminComponents";
 import { DashboardVisuals } from "../../components/admin/DashboardVisuals";
+
+const API_URL = import.meta.env.VITE_API_URL || "https://localhost:7015/api";
 import { 
   Activity, 
   Cpu, 
@@ -25,11 +27,31 @@ export const AdminDashboard = () => {
   const dispatch = useDispatch();
   const { products } = useSelector((state) => state.products);
   const { orders } = useSelector((state) => state.orders);
+  const [customerCount, setCustomerCount] = useState(0);
+  const [topProducts, setTopProducts] = useState([]);
 
   useEffect(() => {
     dispatch(fetchProductsThunk({}));
     dispatch(fetchOrdersThunk());
   }, [dispatch]);
+
+  useEffect(() => {
+    fetch(`${API_URL}/customers`)
+      .then((res) => res.ok ? res.json() : [])
+      .then((data) => setCustomerCount(Array.isArray(data) ? data.length : 0))
+      .catch(() => setCustomerCount(0));
+  }, []);
+
+  useEffect(() => {
+    fetch(`${API_URL}/Dashboard/top-products`)
+      .then((res) => res.ok ? res.json() : [])
+      .then((data) => {
+        if (Array.isArray(data)) setTopProducts(data);
+        else if (data?.data && Array.isArray(data.data)) setTopProducts(data.data);
+        else if (data?.value && Array.isArray(data.value)) setTopProducts(data.value);
+      })
+      .catch(() => {});
+  }, []);
 
   // Telemetry modulation state
   const [activeNode, setActiveNode] = useState("gw-node");
@@ -80,10 +102,10 @@ export const AdminDashboard = () => {
   ];
 
   const stats = {
-    totalUsers: 14,
-    totalOrders: orders.length || 3,
-    totalProducts: products.length || 8,
-    revenue: orders.reduce((sum, ord) => sum + (ord.status !== "Cancelled" ? ord.total : 0), 0) || 124500,
+    totalUsers: customerCount || (orders.length > 0 ? 14 : 0),
+    totalOrders: orders.length || 0,
+    totalProducts: products.length || 0,
+    revenue: orders.reduce((sum, ord) => sum + (ord.status !== "Cancelled" ? ord.total : 0), 0) || 0,
   };
 
   const chartData = [
@@ -313,7 +335,7 @@ export const AdminDashboard = () => {
       </div>
 
       <DashboardCards stats={stats} />
-      <DashboardVisuals products={products} orders={orders} />
+      <DashboardVisuals products={products} orders={orders} topProducts={topProducts} />
       <OrdersTable orders={orders.slice(0, 5)} />
     </div>
   );
