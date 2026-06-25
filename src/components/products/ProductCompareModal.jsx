@@ -254,8 +254,9 @@ export const ProductCompareModal = () => {
                         <div className="flex flex-col items-center space-y-3">
                           <div className="w-24 h-24 rounded-2xl overflow-hidden bg-gray-50/50 dark:bg-gray-900/50 p-2 flex items-center justify-center border border-gray-150/80 dark:border-gray-800/80">
                             <img
-                              src={p.image}
+                              src={p.image || '/placeholder.svg'}
                               alt={p.name}
+                              onError={(e) => { e.target.src = '/placeholder.svg'; }}
                               className="max-h-full max-w-full object-contain rounded-xl select-none"
                             />
                           </div>

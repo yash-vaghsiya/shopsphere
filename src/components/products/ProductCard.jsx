@@ -75,8 +75,9 @@ export const ProductCard = ({ product }) => {
         )}
 
         <img
-          src={product.image}
+          src={product.image || '/placeholder.svg'}
           alt={product.name}
+          onError={(e) => { e.target.src = '/placeholder.svg'; }}
           className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ${product.stock <= 0 ? "opacity-50 grayscale" : ""}`}
         />
 

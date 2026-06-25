@@ -254,7 +254,7 @@ export const Orders = () => {
                             {order.items.map((item) => (
                               <div key={item.productId} className="py-3 flex items-center gap-4 text-xs font-semibold">
                                 <div className="w-12 h-12 rounded-lg border bg-white p-1 flex items-center justify-center shrink-0">
-                                  <img src={item.image} alt="" className="w-full h-full object-contain" />
+                                  <img src={item.image || '/placeholder.svg'} alt="" onError={(e) => { e.target.src = '/placeholder.svg'; }} className="w-full h-full object-contain" />
                                 </div>
                                 <div className="flex-1 min-w-0">
                                   <h6 className="font-bold text-gray-900 dark:text-white truncate">

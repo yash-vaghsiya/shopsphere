@@ -51,7 +51,7 @@ export const CartDrawer = ({ isOpen, onClose }) => {
                 items.map((item) => (
                   <div key={item.id} className="flex gap-4 p-3 rounded-xl border border-gray-100 dark:border-gray-850 hover:border-gray-200 transition-colors">
                     <div className="w-12 h-12 rounded-lg bg-gray-50 dark:bg-gray-950 p-1 flex-shrink-0 flex items-center justify-center border">
-                      <img src={item.image} alt={item.name} className="w-full h-full object-contain" />
+                      <img src={item.image || '/placeholder.svg'} alt={item.name} onError={(e) => { e.target.src = '/placeholder.svg'; }} className="w-full h-full object-contain" />
                     </div>
                     <div className="flex-1 min-w-0 space-y-0.5">
                       <h4 className="text-xs font-bold text-gray-900 dark:text-white truncate">{item.name}</h4>

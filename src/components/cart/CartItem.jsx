@@ -64,8 +64,9 @@ export const CartItem = ({ item }) => {
       <div className="flex items-center gap-4 w-full sm:w-auto">
         <div className="w-16 h-16 rounded-xl bg-gray-50/50 dark:bg-gray-950 p-1 border border-gray-100 dark:border-gray-800 flex-shrink-0 flex items-center justify-center">
           <img
-            src={item.image}
+            src={item.image || '/placeholder.svg'}
             alt={item.name}
+            onError={(e) => { e.target.src = '/placeholder.svg'; }}
             className="w-full h-full object-contain rounded-lg"
           />
         </div>

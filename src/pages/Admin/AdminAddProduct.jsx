@@ -6,6 +6,7 @@ import { Input } from "../../components/common/Input";
 import { Button } from "../../components/common/Button";
 import { toast } from "react-hot-toast";
 import { useNavigate } from "react-router-dom";
+import { axiosInstance } from "../../services/api";
 import { 
   Sparkles, 
   Image, 
@@ -25,6 +26,8 @@ import {
   Cpu,
   MonitorPlay
 } from "lucide-react";
+
+const API_URL = import.meta.env.VITE_API_URL || "https://localhost:7015/api";
 
 // Curated high-resolution professional photography matching available catalog categories
 const PHOTO_PRESETS = [
@@ -249,16 +252,16 @@ export const AdminAddProduct = () => {
         return;
       }
 
-      await dispatch(
-        createProductThunk({
-          name: name.trim(),
-          description: description.trim(),
-          price: parseFloat(price),
-          image: image.trim(),
-          category,
-          stock: parseInt(stock),
-        })
-      ).unwrap();
+      const productData = {
+        name: name.trim(),
+        description: description.trim(),
+        price: parsedPrice,
+        image: image.trim(),
+        category,
+        stock: parsedStock,
+      };
+
+      await dispatch(createProductThunk(productData)).unwrap();
 
       toast.success("New product initialized in stock successfully!");
       navigate("/admin/products");

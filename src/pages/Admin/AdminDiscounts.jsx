@@ -789,7 +789,7 @@ export const AdminDiscounts = () => {
                           <tr key={prod.id} className="hover:bg-gray-50/40 dark:hover:bg-gray-900/10 transition-colors">
                             <td className="px-5 py-3 flex items-center gap-3">
                               <div className="w-9 h-9 rounded-lg border p-0.5 bg-white flex items-center justify-center shrink-0">
-                                <img src={prod.image} alt="" className="w-full h-full object-contain" />
+                                <img src={prod.image || '/placeholder.svg'} alt="" onError={(e) => { e.target.src = '/placeholder.svg'; }} className="w-full h-full object-contain" />
                               </div>
                               <div className="text-left leading-tight truncate max-w-[170px]">
                                 <h4 className="font-bold text-gray-900 dark:text-white truncate">{prod.name}</h4>
@@ -877,7 +877,7 @@ export const AdminDiscounts = () => {
               {editingProduct ? (
                 <form onSubmit={handleSaveProductDiscount} className="space-y-5 text-xs font-semibold text-left">
                   <div className="p-3 bg-gray-55 dark:bg-gray-990 rounded-xl space-y-2 flex items-center gap-3 border dark:border-gray-850">
-                    <img src={editingProduct.image} alt="" className="w-10 h-10 object-contain bg-white rounded border flex-shrink-0" />
+                    <img src={editingProduct.image || '/placeholder.svg'} alt="" onError={(e) => { e.target.src = '/placeholder.svg'; }} className="w-10 h-10 object-contain bg-white rounded border flex-shrink-0" />
                     <div className="leading-tight truncate">
                       <h4 className="font-extrabold text-gray-950 dark:text-white truncate">{editingProduct.name}</h4>
                       <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider">{editingProduct.category}</span>

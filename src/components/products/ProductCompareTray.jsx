@@ -50,8 +50,9 @@ export const ProductCompareTray = () => {
               className="relative w-12 h-12 rounded-xl bg-gray-55 dark:bg-gray-900 p-1 flex items-center justify-center border border-gray-150 dark:border-gray-800 shrink-0 group hover:border-slate-350 dark:hover:border-slate-700 transition-all duration-200"
             >
               <img 
-                src={p.image} 
+                src={p.image || '/placeholder.svg'} 
                 alt={p.name} 
+                onError={(e) => { e.target.src = '/placeholder.svg'; }}
                 className="max-h-full max-w-full object-contain rounded-lg select-none"
               />
               {/* Hover active removal trigger */}

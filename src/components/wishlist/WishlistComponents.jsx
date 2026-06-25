@@ -37,8 +37,9 @@ export const WishlistCard = ({ product }) => {
       {/* Product Image */}
       <div className="relative aspect-square bg-gray-50 dark:bg-gray-950 p-4 flex items-center justify-center overflow-hidden">
         <img
-          src={product.image}
+          src={product.image || '/placeholder.svg'}
           alt={product.name}
+          onError={(e) => { e.target.src = '/placeholder.svg'; }}
           className="max-h-full max-w-full object-contain group-hover:scale-105 transition-transform duration-500"
         />
         

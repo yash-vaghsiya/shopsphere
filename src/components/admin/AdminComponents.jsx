@@ -386,7 +386,7 @@ export const ProductsTable = ({ products = [], onDelete, onEdit }) => {
                 <tr key={prod.id} className="hover:bg-gray-50/40 dark:hover:bg-gray-900/30 transition-colors">
                   <td className="px-6 py-4">
                     <div className="w-10 h-10 rounded-lg p-0.5 border bg-white flex items-center justify-center">
-                      <img src={prod.image} alt="" className="w-full h-full object-contain" />
+                      <img src={prod.image || '/placeholder.svg'} alt="" onError={(e) => { e.target.src = '/placeholder.svg'; }} className="w-full h-full object-contain" />
                     </div>
                   </td>
                   <td className="px-6 py-4 font-bold text-gray-900 dark:text-white">{prod.name}</td>
