@@ -30,7 +30,6 @@ export const AdminProducts = () => {
       try {
         await dispatch(deleteProductThunk(id)).unwrap();
         toast.success("Product deleted from catalog!");
-        dispatch(fetchProductsThunk({}));
       } catch (err) {
         toast.error(err || "Failed to delete product.");
       }

@@ -57,6 +57,24 @@ const normalizeProduct = (p) => {
   };
 };
 
+const getDeletedIds = () => {
+  try { return new Set(JSON.parse(localStorage.getItem('deletedProductIds') || '[]')); }
+  catch { return new Set(); }
+};
+
+const addDeletedId = (id) => {
+  try {
+    const ids = JSON.parse(localStorage.getItem('deletedProductIds') || '[]');
+    ids.push(String(id));
+    localStorage.setItem('deletedProductIds', JSON.stringify([...new Set(ids)]));
+  } catch {}
+};
+
+const filterDeleted = (products) => {
+  const deleted = getDeletedIds();
+  return products.filter((p) => !deleted.has(String(p.id)));
+};
+
 const initialState = {
   products: [],
   featuredProducts: [],
@@ -92,14 +110,14 @@ export const fetchProductsThunk = createAsyncThunk(
         const arr = unwrapArray(data);
         if (arr && arr.length > 0) {
           const mapped = arr.map(normalizeProduct);
-          if (mapped.some((p) => p.image)) return mapped;
+          if (mapped.some((p) => p.image)) return filterDeleted(mapped);
         }
       }
     } catch {}
     try {
       const response = await axiosInstance.get("/api/products", { params });
       const arr = Array.isArray(response.data) ? response.data : unwrapArray(response.data) ?? [];
-      return arr.map(normalizeProduct);
+      return filterDeleted(arr.map(normalizeProduct));
     } catch (error) {
       return thunkAPI.rejectWithValue(
         error.response?.data?.message || "Failed to load products"
@@ -134,9 +152,10 @@ export const createProductThunk = createAsyncThunk(
   "products/createProduct",
   async (productData, thunkAPI) => {
     try {
+      const token = localStorage.getItem("token");
       const response = await fetch(`${API_URL}/Products`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify(productData),
       });
       if (response.ok) {
@@ -161,11 +180,16 @@ export const deleteProductThunk = createAsyncThunk(
   "products/deleteProduct",
   async (id, thunkAPI) => {
     try {
-      const response = await fetch(`${API_URL}/Products/${id}`, { method: "DELETE" });
-      if (response.ok) return id;
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${API_URL}/Products/${id}`, {
+        method: "DELETE",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (response.ok) { addDeletedId(id); return id; }
     } catch {}
     try {
       await axiosInstance.delete(`/api/products/${id}`);
+      addDeletedId(id);
       return id;
     } catch (error) {
       return thunkAPI.rejectWithValue(
