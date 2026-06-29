@@ -77,12 +77,21 @@ export const AdminProducts = () => {
         image: editImage.trim() || undefined,
       };
 
+      const dotNetBody = {
+        name: editName.trim(),
+        stockQuantity: parsedStock,
+        price: parsedPrice,
+        brand: editBrand.trim(),
+        description: editDescription.trim(),
+        imageUrl: editImage.trim() || undefined,
+      };
+
       let res;
       try {
         res = await fetch(`${API_URL}/Products/${editingProduct.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
+          body: JSON.stringify(dotNetBody),
         });
       } catch {
         res = null;
