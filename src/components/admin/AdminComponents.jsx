@@ -391,7 +391,7 @@ export const OrdersTable = ({ orders = [], onStatusChange }) => {
                               </div>
                               <div>
                                 <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Customer Name</p>
-                                <p className="font-semibold text-gray-800 dark:text-gray-200">{ord.customerName || '—'}</p>
+                                <p className="font-semibold text-gray-800 dark:text-gray-200">{ord.CustomerName || '—'}</p>
                               </div>
                               <div>
                                 <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Email</p>
