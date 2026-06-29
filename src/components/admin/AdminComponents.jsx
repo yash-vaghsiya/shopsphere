@@ -335,9 +335,17 @@ export const OrdersTable = ({ orders = [], onStatusChange }) => {
                       <td className="px-6 py-4 text-gray-500 max-w-[200px] truncate" title={addressStr}>
                         {addressStr}
                       </td>
-                      <td className="px-6 py-4 text-gray-500 max-w-[200px] truncate" title={ord.items.map(it => `${it.name} x${it.quantity}`).join(', ')}>
+                      <td className="px-6 py-4 text-gray-500 max-w-[220px]">
                         {ord.items.length > 0
-                          ? `${ord.items[0].name}${ord.items.length > 1 ? ` +${ord.items.length - 1} more` : ''}`
+                          ? <div className="space-y-1">{[...ord.items].slice(0, 3).map((it, i) => (
+                              <div key={i} className="flex items-center gap-1.5">
+                                {it.image && (
+                                  <img src={it.image} alt="" onError={(e) => { e.target.style.display = 'none'; }} className="w-5 h-5 rounded object-contain bg-white border flex-shrink-0" />
+                                )}
+                                <span className="truncate text-[11px] leading-tight">{it.name}</span>
+                                <span className="text-gray-400 font-bold flex-shrink-0 ml-auto">x{it.quantity}</span>
+                              </div>
+                            ))}{ord.items.length > 3 && <div className="text-[10px] text-gray-400 font-semibold">+{ord.items.length - 3} more</div>}</div>
                           : `${ord.items.length}`}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
