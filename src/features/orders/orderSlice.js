@@ -241,8 +241,15 @@ export const updateOrderStatusThunk = createAsyncThunk(
   "orders/updateOrderStatus",
   async ({ id, status }, thunkAPI) => {
     try {
+      const response = await fetch(`${API_URL}/Orders/${id}/status?status=${encodeURIComponent(status)}`, {
+        method: "PUT",
+      });
+      if (response.ok) return { id, status };
+    } catch {}
+    try {
       const response = await axiosInstance.patch(`/api/orders/${id}`, { status });
-      return response.data; // Expected: Order
+      const order = normalizeOrder(response.data);
+      return { id: order.id, status: order.status };
     } catch (error) {
       return thunkAPI.rejectWithValue(
         error.response?.data?.message || "Failed to update order status"
@@ -296,12 +303,10 @@ const orderSlice = createSlice({
         state.error = action.payload;
       })
       .addCase(updateOrderStatusThunk.fulfilled, (state, action) => {
-        const index = state.orders.findIndex((o) => o.id === action.payload.id);
-        if (index !== -1) {
-          state.orders[index] = action.payload;
-        }
-        if (state.currentOrder?.id === action.payload.id) {
-          state.currentOrder = action.payload;
+        const order = state.orders.find((o) => String(o.id) === String(action.payload.id));
+        if (order) order.status = action.payload.status;
+        if (state.currentOrder && String(state.currentOrder.id) === String(action.payload.id)) {
+          state.currentOrder.status = action.payload.status;
         }
       });
   },

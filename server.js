@@ -373,15 +373,14 @@ app.post('/api/orders', (req, res) => {
 });
 
 app.patch('/api/orders/:id', (req, res) => {
-  const orderId = Number(req.params.id);
-  const order = orders.find((item) => item.id === orderId);
+  const order = orders.find((item) => String(item.id) === String(req.params.id));
   if (!order) {
     return res.status(404).json({ message: 'Order not found' });
   }
   const updates = req.body || {};
-  if (updates.status) order.status = updates.status;
-  if (updates.customerName) order.customerName = updates.customerName;
-  if (updates.shippingAddress) order.shippingAddress = updates.shippingAddress;
+  if (updates.status !== undefined) order.status = updates.status;
+  if (updates.customerName !== undefined) order.customerName = updates.customerName;
+  if (updates.shippingAddress !== undefined) order.shippingAddress = updates.shippingAddress;
   res.json(order);
 });
 
