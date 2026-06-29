@@ -24,14 +24,30 @@ const unwrapArray = (data) => {
   return null;
 };
 
-const normalizeOrder = (o) => ({
-  id: o.id ?? o.Id ?? o.orderId ?? o.OrderId ?? Date.now() + Math.random(),
-  customerName: o.customerName ?? o.CustomerName ?? o.name ?? o.Name ?? o.userName ?? o.UserName ?? '',
-  items: o.items ?? o.Items ?? o.orderItems ?? o.OrderItems ?? [],
-  total: o.total ?? o.Total ?? o.amount ?? o.Amount ?? o.totalAmount ?? o.TotalAmount ?? 0,
-  createdAt: o.createdAt ?? o.CreatedAt ?? o.orderDate ?? o.OrderDate ?? o.date ?? o.Date ?? new Date().toISOString(),
-  status: o.status ?? o.Status ?? 'Pending',
-});
+const parseShippingAddress = (sa) => {
+  if (!sa) return {};
+  if (typeof sa === 'string') { try { return JSON.parse(sa); } catch { return {}; } }
+  if (typeof sa === 'object') return sa;
+  return {};
+};
+
+const normalizeOrder = (o) => {
+  const sa = parseShippingAddress(o.shippingAddress ?? o.ShippingAddress);
+  return {
+    id: o.id ?? o.Id ?? o.orderId ?? o.OrderId ?? Date.now() + Math.random(),
+    orderNumber: o.orderNumber ?? o.OrderNumber ?? `#${o.id ?? o.Id ?? o.orderId ?? o.OrderId ?? ''}`,
+    customerName: o.customerName ?? o.CustomerName ?? o.name ?? o.Name ?? o.userName ?? o.UserName ?? '',
+    email: o.email ?? o.Email ?? sa.email ?? sa.Email ?? '',
+    phone: o.phone ?? o.Phone ?? o.shippingPhone ?? o.ShippingPhone ?? sa.phone ?? sa.Phone ?? sa.mobile ?? sa.Mobile ?? '',
+    items: o.items ?? o.Items ?? o.orderItems ?? o.OrderItems ?? [],
+    total: o.total ?? o.Total ?? o.amount ?? o.Amount ?? o.totalAmount ?? o.TotalAmount ?? 0,
+    paymentMethod: o.paymentMethod ?? o.PaymentMethod ?? '',
+    shippingAddress: sa,
+    userId: o.userId ?? o.UserId ?? '',
+    createdAt: o.createdAt ?? o.CreatedAt ?? o.orderDate ?? o.OrderDate ?? o.date ?? o.Date ?? new Date().toISOString(),
+    status: o.status ?? o.Status ?? 'Pending',
+  };
+};
 
 export const fetchOrdersThunk = createAsyncThunk(
   "orders/fetchOrders",

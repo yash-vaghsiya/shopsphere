@@ -280,6 +280,8 @@ export const AnalyticsChart = ({ data = [] }) => {
 // ADMIN ORDERS MANAGEMENT TABLE
 
 export const OrdersTable = ({ orders = [], onStatusChange }) => {
+  const [expandedId, setExpandedId] = React.useState(null);
+
   return (
     <div className="bg-white dark:bg-gray-900 border border-gray-150 dark:border-gray-800 rounded-2xl shadow-sm overflow-hidden">
       <div className="px-6 py-5 border-b border-gray-100 dark:border-gray-850 flex items-center justify-between">
@@ -291,59 +293,132 @@ export const OrdersTable = ({ orders = [], onStatusChange }) => {
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="bg-gray-50/50 dark:bg-gray-950/40 border-b border-gray-100 dark:border-gray-850 text-[10px] uppercase font-bold text-gray-400 dark:text-gray-500 tracking-wider">
-              <th className="px-6 py-4">Invoiced ID</th>
-              <th className="px-6 py-4">Recipient Name</th>
-              <th className="px-6 py-4">Ordered Items</th>
-              <th className="px-6 py-4">Net Total</th>
-              <th className="px-6 py-4">Date Invoiced</th>
-              <th className="px-6 py-4 text-right">Status Controls</th>
+              <th className="px-6 py-4">Order #</th>
+              <th className="px-6 py-4">Customer</th>
+              <th className="px-6 py-4">Contact</th>
+              <th className="px-6 py-4">Address</th>
+              <th className="px-6 py-4">Items</th>
+              <th className="px-6 py-4">Payment</th>
+              <th className="px-6 py-4">Amount</th>
+              <th className="px-6 py-4">Date</th>
+              <th className="px-6 py-4 text-right">Status</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 dark:divide-gray-850 text-xs">
             {orders.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-6 py-12 text-center text-gray-400 italic">
+                <td colSpan={9} className="px-6 py-12 text-center text-gray-400 italic">
                   No orders found in the system logs.
                 </td>
               </tr>
             ) : (
-              orders.map((ord) => (
-                <tr key={ord.id} className="hover:bg-gray-50/40 dark:hover:bg-gray-900/30 transition-colors">
-                  <td className="px-6 py-4 font-bold text-gray-900 dark:text-white truncate max-w-[120px]">#{ord.id}</td>
-                  <td className="px-6 py-4 font-semibold text-gray-700 dark:text-gray-300">{ord.customerName}</td>
-                  <td className="px-6 py-4 text-gray-500">{ord.items.length} Product(s)</td>
-                  <td className="px-6 py-4 font-bold text-blue-600">{formatCurrency(ord.total)}</td>
-                  <td className="px-6 py-4 text-gray-500">{formatDate(ord.createdAt)}</td>
-                  <td className="px-6 py-4 text-right flex justify-end">
-                    {onStatusChange ? (
-                      <select
-                        value={ord.status}
-                        onChange={(e) => onStatusChange(ord.id, e.target.value)}
-                        className="px-2.5 py-1.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-xs font-bold outline-none cursor-pointer text-gray-800 dark:text-gray-200"
-                      >
-                        <option value="Pending">Pending</option>
-                        <option value="Processing">Processing</option>
-                        <option value="Shipped">Shipped</option>
-                        <option value="Delivered">Delivered</option>
-                        <option value="Cancelled">Cancelled</option>
-                      </select>
-                    ) : (
-                      <span
-                        className={cn(
-                          "px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider",
-                          ord.status === "Delivered" && "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-450",
-                          ord.status === "Shipped" && "bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-450",
-                          ord.status === "Pending" && "bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-450",
-                          ord.status === "Processing" && "bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-450",
-                          ord.status === "Cancelled" && "bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-450"
+              orders.map((ord) => {
+                const sa = ord.shippingAddress || {};
+                const addressStr = [sa.address, sa.city, sa.state].filter(Boolean).join(', ') || '—';
+                const expanded = expandedId === ord.id;
+                return (
+                  <React.Fragment key={ord.id}>
+                    <tr
+                      onClick={() => setExpandedId(expanded ? null : ord.id)}
+                      className="hover:bg-gray-50/40 dark:hover:bg-gray-900/30 transition-colors cursor-pointer"
+                    >
+                      <td className="px-6 py-4 font-bold text-gray-900 dark:text-white whitespace-nowrap">
+                        {ord.orderNumber || `#${ord.id}`}
+                      </td>
+                      <td className="px-6 py-4 font-semibold text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                        {ord.customerName}
+                      </td>
+                      <td className="px-6 py-4 text-gray-500 whitespace-nowrap">
+                        <div>{ord.email || '—'}</div>
+                        <div className="text-gray-400">{ord.phone || ''}</div>
+                      </td>
+                      <td className="px-6 py-4 text-gray-500 max-w-[200px] truncate" title={addressStr}>
+                        {addressStr}
+                      </td>
+                      <td className="px-6 py-4 text-gray-500">{ord.items.length}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className="px-2 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 rounded text-[10px] font-bold">
+                          {ord.paymentMethod || '—'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 font-bold text-blue-600 whitespace-nowrap">
+                        {formatCurrency(ord.total)}
+                      </td>
+                      <td className="px-6 py-4 text-gray-500 whitespace-nowrap">
+                        {formatDate(ord.createdAt)}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        {onStatusChange ? (
+                          <select
+                            value={ord.status}
+                            onChange={(e) => onStatusChange(ord.id, e.target.value)}
+                            className="px-2.5 py-1.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-xs font-bold outline-none cursor-pointer text-gray-800 dark:text-gray-200"
+                          >
+                            <option value="Pending">Pending</option>
+                            <option value="Processing">Processing</option>
+                            <option value="Shipped">Shipped</option>
+                            <option value="Delivered">Delivered</option>
+                            <option value="Cancelled">Cancelled</option>
+                          </select>
+                        ) : (
+                          <span
+                            className={cn(
+                              "px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider",
+                              ord.status === "Delivered" && "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-450",
+                              ord.status === "Shipped" && "bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-450",
+                              ord.status === "Pending" && "bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-450",
+                              ord.status === "Processing" && "bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-450",
+                              ord.status === "Cancelled" && "bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-450"
+                            )}
+                          >
+                            {ord.status}
+                          </span>
                         )}
-                      >
-                        {ord.status}
-                      </span>
+                      </td>
+                    </tr>
+                    {expanded && (
+                      <tr className="bg-gray-50/60 dark:bg-gray-950/30">
+                        <td colSpan={9} className="px-6 py-4">
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+                            <div>
+                              <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Order ID</p>
+                              <p className="font-semibold text-gray-800 dark:text-gray-200">{ord.id}</p>
+                            </div>
+                            <div>
+                              <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Customer Name</p>
+                              <p className="font-semibold text-gray-800 dark:text-gray-200">{ord.customerName || '—'}</p>
+                            </div>
+                            <div>
+                              <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Email</p>
+                              <p className="font-semibold text-gray-800 dark:text-gray-200">{ord.email || '—'}</p>
+                            </div>
+                            <div>
+                              <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Phone</p>
+                              <p className="font-semibold text-gray-800 dark:text-gray-200">{ord.phone || '—'}</p>
+                            </div>
+                            <div>
+                              <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Address</p>
+                              <p className="font-semibold text-gray-800 dark:text-gray-200">{sa.address || '—'}</p>
+                            </div>
+                            <div>
+                              <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">City / State</p>
+                              <p className="font-semibold text-gray-800 dark:text-gray-200">{[sa.city, sa.state].filter(Boolean).join(', ') || '—'}</p>
+                            </div>
+                            <div>
+                              <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Zip Code</p>
+                              <p className="font-semibold text-gray-800 dark:text-gray-200">{sa.zipCode || sa.zip || '—'}</p>
+                            </div>
+                            <div>
+                              <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">User ID</p>
+                              <p className="font-mono text-gray-600 dark:text-gray-400">{ord.userId || '—'}</p>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
                     )}
-                  </td>
-                </tr>
-              ))
+                  </React.Fragment>
+                );
+              })
             )}
           </tbody>
         </table>
