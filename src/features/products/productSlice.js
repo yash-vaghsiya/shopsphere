@@ -46,7 +46,7 @@ const normalizeProduct = (p) => {
     price: p.price ?? p.Price ?? p.unitPrice ?? p.UnitPrice ?? 0,
     image,
     category: p.category ?? p.Category ?? p.cat ?? p.Cat ?? 'General',
-    stock: p.stock ?? p.Stock ?? p.quantity ?? p.Quantity ?? p.StockQuantity ?? 0,
+    stock: p.stock ?? p.Stock ?? p.stockQuantity ?? p.StockQuantity ?? p.quantity ?? p.Quantity ?? 0,
     brand: p.brand ?? p.Brand ?? '',
     featured: p.featured ?? p.Featured ?? false,
     trending: p.trending ?? p.Trending ?? false,
@@ -156,13 +156,18 @@ export const createProductThunk = createAsyncThunk(
       const response = await fetch(`${API_URL}/Products`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify(productData),
+        body: JSON.stringify({ ...productData, stockQuantity: productData.stock, imageUrl: productData.image }),
       });
       if (response.ok) {
-        const data = await response.json();
-        const obj = data?.data ?? data?.value ?? data;
-        const normalized = normalizeProduct(obj);
-        return { ...normalized, image: normalized.image || productData.image || '' };
+        const text = await response.text();
+        let data;
+        try { data = JSON.parse(text); } catch { data = null; }
+        if (data) {
+          const obj = data?.data ?? data?.value ?? data;
+          const normalized = normalizeProduct(obj);
+          return { ...normalized, image: normalized.image || productData.image || '' };
+        }
+        return { ...productData, id: Date.now(), image: productData.image || '' };
       }
     } catch {}
     try {
