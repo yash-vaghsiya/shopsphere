@@ -202,11 +202,11 @@ export const DashboardVisuals = ({ products = [], orders = [], topProducts = [] 
   });
 
   const statusPieData = [
-    { name: "Delivered", value: statusCounts.Delivered || 24, color: "#10b981" },
-    { name: "Shipped", value: statusCounts.Shipped || 12, color: "#3b82f6" },
-    { name: "Processing", value: statusCounts.Processing || 8, color: "#8b5cf6" },
-    { name: "Pending", value: statusCounts.Pending || 5, color: "#f59e0b" },
-    { name: "Cancelled", value: statusCounts.Cancelled || 3, color: "#ef4444" }
+    { name: "Delivered", value: statusCounts.Delivered || 0, color: "#10b981" },
+    { name: "Shipped", value: statusCounts.Shipped || 0, color: "#3b82f6" },
+    { name: "Processing", value: statusCounts.Processing || 0, color: "#8b5cf6" },
+    { name: "Pending", value: statusCounts.Pending || 0, color: "#f59e0b" },
+    { name: "Cancelled", value: statusCounts.Cancelled || 0, color: "#ef4444" }
   ];
 
   const totalStatusInvoices = statusPieData.reduce((acc, curr) => acc + curr.value, 0);
