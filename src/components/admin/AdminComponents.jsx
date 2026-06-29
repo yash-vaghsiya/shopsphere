@@ -433,7 +433,7 @@ export const OrdersTable = ({ orders = [], onStatusChange }) => {
                                       <div className="flex-1 min-w-0">
                                         <p className="font-bold text-gray-800 dark:text-gray-200 text-xs truncate">{item.name || `Product #${item.productId}`}</p>
                                         <p className="text-[10px] text-gray-400">
-                                          Qty: {item.quantity} × {formatCurrency(item.price)}
+                                          Qty: {item.quantity}
                                         </p>
                                       </div>
                                       <div className="text-right flex-shrink-0">

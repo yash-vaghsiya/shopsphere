@@ -33,13 +33,23 @@ const parseShippingAddress = (sa) => {
 
 const normalizeOrder = (o) => {
   const sa = parseShippingAddress(o.shippingAddress ?? o.ShippingAddress);
+  let items = o.items ?? o.Items ?? o.orderItems ?? o.OrderItems ?? [];
+  if (items.length === 0 && (o.productName ?? o.ProductName)) {
+    items = [{
+      productId: o.productId ?? o.ProductId ?? 0,
+      name: o.productName ?? o.ProductName ?? '',
+      quantity: o.quantity ?? o.Quantity ?? 0,
+      price: o.unitPrice ?? o.UnitPrice ?? o.price ?? o.Price ?? 0,
+      image: o.image ?? o.Image ?? '',
+    }];
+  }
   return {
     id: o.id ?? o.Id ?? o.orderId ?? o.OrderId ?? Date.now() + Math.random(),
     orderNumber: o.orderNumber ?? o.OrderNumber ?? `#${o.id ?? o.Id ?? o.orderId ?? o.OrderId ?? ''}`,
-    customerName: o.customerName ?? o.CustomerName ?? o.name ?? o.Name ?? o.userName ?? o.UserName ?? '',
+    customerName: o.customerName ?? o.CustomerName ?? sa.fullName ?? sa.name ?? o.name ?? o.Name ?? o.userName ?? o.UserName ?? '',
     email: o.email ?? o.Email ?? sa.email ?? sa.Email ?? '',
     phone: o.phone ?? o.Phone ?? o.shippingPhone ?? o.ShippingPhone ?? sa.phone ?? sa.Phone ?? sa.mobile ?? sa.Mobile ?? '',
-    items: o.items ?? o.Items ?? o.orderItems ?? o.OrderItems ?? [],
+    items,
     total: o.total ?? o.Total ?? o.amount ?? o.Amount ?? o.totalAmount ?? o.TotalAmount ?? 0,
     paymentMethod: o.paymentMethod ?? o.PaymentMethod ?? '',
     shippingAddress: sa,
@@ -154,22 +164,18 @@ export const createOrderThunk = createAsyncThunk(
       dotNetToken = u.token;
     } catch {}
     const sa = orderData.shippingAddress || {};
+    const items = orderData.items || [];
     const dotNetPayload = {
-      UserId: dotNetUserId || 'guest@shopsphere.com',
+      UserId: String(dotNetUserId || ''),
       OrderNumber: `ORD-${Date.now().toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`,
       Total: Number(orderData.total) || 0,
       Status: orderData.status || 'Pending',
       PaymentMethod: orderData.paymentMethod || '',
       ShippingAddress: JSON.stringify(sa),
-      ShippingPhone: sa.phone || '',
       CreatedAt: new Date().toISOString(),
-      Items: (orderData.items || []).map(it => ({
-        ProductId: it.productId || it.id || 0,
-        ProductName: it.name || '',
-        Quantity: it.quantity || 1,
-        UnitPrice: it.price || 0,
-        Image: it.image || '',
-      })),
+      CustomerName: sa.fullName || orderData.customerName || '',
+      ProductName: (items[0] && items[0].name) || '',
+      Quantity: items.reduce((sum, it) => sum + (it.quantity || 0), 0) || 0,
     };
     try {
       const payloadStr = JSON.stringify(dotNetPayload);
