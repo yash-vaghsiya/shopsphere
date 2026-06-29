@@ -34,14 +34,23 @@ const parseShippingAddress = (sa) => {
 const normalizeOrder = (o) => {
   const sa = parseShippingAddress(o.shippingAddress ?? o.ShippingAddress);
   let items = o.items ?? o.Items ?? o.orderItems ?? o.OrderItems ?? [];
-  if (items.length === 0 && (o.productName ?? o.ProductName)) {
-    items = [{
-      productId: o.productId ?? o.ProductId ?? 0,
-      name: o.productName ?? o.ProductName ?? '',
-      quantity: o.quantity ?? o.Quantity ?? 0,
-      price: o.unitPrice ?? o.UnitPrice ?? o.price ?? o.Price ?? 0,
-      image: o.image ?? o.Image ?? '',
-    }];
+  if (items.length === 0) {
+    if (sa._items && Array.isArray(sa._items) && sa._items.length > 0) {
+      items = sa._items;
+    } else if (o.productName ?? o.ProductName) {
+      const rawNames = String(o.productName ?? o.ProductName ?? '');
+      const rawQty = o.quantity ?? o.Quantity ?? 0;
+      if (rawNames.includes(' | ')) {
+        const names = rawNames.split(' | ');
+        const qtyPerItem = Math.max(1, Math.floor(Number(rawQty) / names.length));
+        items = names.map((name, i) => ({
+          productId: 0, name, quantity: i === names.length - 1 ? Number(rawQty) - qtyPerItem * (names.length - 1) : qtyPerItem,
+          price: 0, image: '',
+        }));
+      } else {
+        items = [{ productId: 0, name: rawNames, quantity: Number(rawQty) || 0, price: 0, image: '' }];
+      }
+    }
   }
   return {
     id: o.id ?? o.Id ?? o.orderId ?? o.OrderId ?? Date.now() + Math.random(),
@@ -164,18 +173,24 @@ export const createOrderThunk = createAsyncThunk(
       dotNetToken = u.token;
     } catch {}
     const sa = orderData.shippingAddress || {};
-    const items = orderData.items || [];
+    const orderItems = (orderData.items || []).map(it => ({
+      productId: it.productId || it.id || 0,
+      name: it.name || '',
+      price: it.price || 0,
+      quantity: it.quantity || 1,
+      image: it.image || '',
+    }));
     const dotNetPayload = {
       UserId: String(dotNetUserId || ''),
       OrderNumber: `ORD-${Date.now().toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`,
       Total: Number(orderData.total) || 0,
       Status: orderData.status || 'Pending',
       PaymentMethod: orderData.paymentMethod || '',
-      ShippingAddress: JSON.stringify(sa),
+      ShippingAddress: JSON.stringify({ ...sa, _items: orderItems }),
       CreatedAt: new Date().toISOString(),
       CustomerName: sa.fullName || orderData.customerName || '',
-      ProductName: (items[0] && items[0].name) || '',
-      Quantity: items.reduce((sum, it) => sum + (it.quantity || 0), 0) || 0,
+      ProductName: orderItems.map(it => it.name).join(' | ') || '',
+      Quantity: orderItems.reduce((sum, it) => sum + it.quantity, 0) || 0,
     };
     try {
       const payloadStr = JSON.stringify(dotNetPayload);

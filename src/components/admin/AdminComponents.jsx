@@ -397,10 +397,10 @@ export const OrdersTable = ({ orders = [], onStatusChange }) => {
                                 <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Order ID</p>
                                 <p className="font-semibold text-gray-800 dark:text-gray-200">{ord.id}</p>
                               </div>
-                              <div>
+                              {/* <div>
                                 <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Customer Name</p>
                                 <p className="font-semibold text-gray-800 dark:text-gray-200">{ord.CustomerName || '—'}</p>
-                              </div>
+                              </div> */}
                               <div>
                                 <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Email</p>
                                 <p className="font-semibold text-gray-800 dark:text-gray-200">{ord.email || '—'}</p>
