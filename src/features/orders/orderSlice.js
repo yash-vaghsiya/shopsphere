@@ -163,6 +163,13 @@ export const createOrderThunk = createAsyncThunk(
       ShippingAddress: JSON.stringify(sa),
       ShippingPhone: sa.phone || '',
       CreatedAt: new Date().toISOString(),
+      Items: (orderData.items || []).map(it => ({
+        ProductId: it.productId || it.id || 0,
+        ProductName: it.name || '',
+        Quantity: it.quantity || 1,
+        UnitPrice: it.price || 0,
+        Image: it.image || '',
+      })),
     };
     try {
       const payloadStr = JSON.stringify(dotNetPayload);

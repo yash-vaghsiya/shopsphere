@@ -297,7 +297,7 @@ export const OrdersTable = ({ orders = [], onStatusChange }) => {
               <th className="px-6 py-4">Customer</th>
               <th className="px-6 py-4">Contact</th>
               <th className="px-6 py-4">Address</th>
-              <th className="px-6 py-4">Items</th>
+              <th className="px-6 py-4">Products</th>
               <th className="px-6 py-4">Payment</th>
               <th className="px-6 py-4">Amount</th>
               <th className="px-6 py-4">Date</th>
@@ -335,7 +335,11 @@ export const OrdersTable = ({ orders = [], onStatusChange }) => {
                       <td className="px-6 py-4 text-gray-500 max-w-[200px] truncate" title={addressStr}>
                         {addressStr}
                       </td>
-                      <td className="px-6 py-4 text-gray-500">{ord.items.length}</td>
+                      <td className="px-6 py-4 text-gray-500 max-w-[200px] truncate" title={ord.items.map(it => `${it.name} x${it.quantity}`).join(', ')}>
+                        {ord.items.length > 0
+                          ? `${ord.items[0].name}${ord.items.length > 1 ? ` +${ord.items.length - 1} more` : ''}`
+                          : `${ord.items.length}`}
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className="px-2 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 rounded text-[10px] font-bold">
                           {ord.paymentMethod || '—'}
@@ -379,39 +383,67 @@ export const OrdersTable = ({ orders = [], onStatusChange }) => {
                     {expanded && (
                       <tr className="bg-gray-50/60 dark:bg-gray-950/30">
                         <td colSpan={9} className="px-6 py-4">
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
-                            <div>
-                              <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Order ID</p>
-                              <p className="font-semibold text-gray-800 dark:text-gray-200">{ord.id}</p>
+                          <div className="space-y-4">
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+                              <div>
+                                <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Order ID</p>
+                                <p className="font-semibold text-gray-800 dark:text-gray-200">{ord.id}</p>
+                              </div>
+                              <div>
+                                <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Customer Name</p>
+                                <p className="font-semibold text-gray-800 dark:text-gray-200">{ord.customerName || '—'}</p>
+                              </div>
+                              <div>
+                                <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Email</p>
+                                <p className="font-semibold text-gray-800 dark:text-gray-200">{ord.email || '—'}</p>
+                              </div>
+                              <div>
+                                <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Phone</p>
+                                <p className="font-semibold text-gray-800 dark:text-gray-200">{ord.phone || '—'}</p>
+                              </div>
+                              <div>
+                                <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Address</p>
+                                <p className="font-semibold text-gray-800 dark:text-gray-200">{sa.address || '—'}</p>
+                              </div>
+                              <div>
+                                <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">City / State</p>
+                                <p className="font-semibold text-gray-800 dark:text-gray-200">{[sa.city, sa.state].filter(Boolean).join(', ') || '—'}</p>
+                              </div>
+                              <div>
+                                <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Zip Code</p>
+                                <p className="font-semibold text-gray-800 dark:text-gray-200">{sa.zipCode || sa.zip || '—'}</p>
+                              </div>
+                              <div>
+                                <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">User ID</p>
+                                <p className="font-mono text-gray-600 dark:text-gray-400">{ord.userId || '—'}</p>
+                              </div>
                             </div>
-                            <div>
-                              <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Customer Name</p>
-                              <p className="font-semibold text-gray-800 dark:text-gray-200">{ord.customerName || '—'}</p>
-                            </div>
-                            <div>
-                              <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Email</p>
-                              <p className="font-semibold text-gray-800 dark:text-gray-200">{ord.email || '—'}</p>
-                            </div>
-                            <div>
-                              <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Phone</p>
-                              <p className="font-semibold text-gray-800 dark:text-gray-200">{ord.phone || '—'}</p>
-                            </div>
-                            <div>
-                              <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Address</p>
-                              <p className="font-semibold text-gray-800 dark:text-gray-200">{sa.address || '—'}</p>
-                            </div>
-                            <div>
-                              <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">City / State</p>
-                              <p className="font-semibold text-gray-800 dark:text-gray-200">{[sa.city, sa.state].filter(Boolean).join(', ') || '—'}</p>
-                            </div>
-                            <div>
-                              <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">Zip Code</p>
-                              <p className="font-semibold text-gray-800 dark:text-gray-200">{sa.zipCode || sa.zip || '—'}</p>
-                            </div>
-                            <div>
-                              <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-1">User ID</p>
-                              <p className="font-mono text-gray-600 dark:text-gray-400">{ord.userId || '—'}</p>
-                            </div>
+
+                            {ord.items.length > 0 && (
+                              <div>
+                                <p className="text-[9px] uppercase font-black text-gray-400 tracking-wider mb-2">Products Ordered</p>
+                                <div className="space-y-1.5">
+                                  {ord.items.map((item, idx) => (
+                                    <div key={idx} className="flex items-center gap-3 bg-white dark:bg-gray-900 rounded-lg p-2.5 border border-gray-100 dark:border-gray-800">
+                                      {item.image && (
+                                        <div className="w-10 h-10 rounded-lg overflow-hidden border bg-white flex-shrink-0">
+                                          <img src={item.image} alt="" onError={(e) => { e.target.style.display = 'none'; }} className="w-full h-full object-contain" />
+                                        </div>
+                                      )}
+                                      <div className="flex-1 min-w-0">
+                                        <p className="font-bold text-gray-800 dark:text-gray-200 text-xs truncate">{item.name || `Product #${item.productId}`}</p>
+                                        <p className="text-[10px] text-gray-400">
+                                          Qty: {item.quantity} × {formatCurrency(item.price)}
+                                        </p>
+                                      </div>
+                                      <div className="text-right flex-shrink-0">
+                                        <p className="font-bold text-blue-600 text-xs">{formatCurrency((item.price || 0) * (item.quantity || 1))}</p>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </td>
                       </tr>
