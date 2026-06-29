@@ -11,6 +11,7 @@ app.use(express.json());
 
 const DATA_DIR = path.resolve('data');
 const BROADCASTS_FILE = path.join(DATA_DIR, 'broadcasts.json');
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const loadJson = (file, fallback) => {
@@ -417,8 +418,8 @@ const subscribers = [];
 // Contact queries (in-memory)
 const contactQueries = [];
 
-// In-memory user store for mock auth fallback
-const users = [];
+// In-memory user store for mock auth fallback (loaded from disk)
+const users = loadJson(USERS_FILE, []);
 
 // External API base URL for dynamic forwarding (server-to-server, no CORS)
 const EXTERNAL_API = process.env.VITE_API_URL || 'https://localhost:7015/api';
@@ -498,19 +499,27 @@ app.post('/api/auth/register', wrapAsync(async (req, res) => {
     console.warn('Register fallback defaults used - body keys:', Object.keys(body));
   }
   // Try external API first (server-to-server, no CORS)
-  const ext = await forwardAuth('/Auth/register', { firstName, lastName: lastName || '', phone: phone || '', email, password });
+  const ext = await forwardAuth('/Auth/register', { dto: {}, firstName, lastName: lastName || '', phone: phone || '', email, password });
   if (ext.ok) {
-    const extUser = ext.data.user || {};
-    const user = { id: extUser.id || Date.now(), name: extUser.name || fullName, email, phone: phone || extUser.phone || '', role: String(email).toLowerCase().includes("admin") ? 'Admin' : (extUser.role || 'Customer') };
-    const idx = users.findIndex(u => u.email === email);
-    if (idx >= 0) users[idx] = user; else users.push(user);
-    return res.status(201).json({ user, token: ext.data.token });
+    // .NET register returns only { success, message } — no user/token → login to get them
+    const loginExt = await forwardAuth('/Auth/login', { dto: {}, email, password });
+    if (loginExt.ok) {
+      const token = loginExt.data.token;
+      const jwtPayload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf-8'));
+      const userId = String(jwtPayload.UserId || jwtPayload.userId || '');
+      const user = { id: userId, name: fullName, email, phone, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer' };
+      const idx = users.findIndex(u => u.email === email);
+      if (idx >= 0) users[idx] = user; else users.push(user);
+      saveJson(USERS_FILE, users);
+      return res.status(201).json({ user, token });
+    }
   }
   // Fall back to local mock — store password for credential verification
   const id = Date.now();
   const user = { id, name: fullName, email, phone: phone || '', password, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer' };
   const idx = users.findIndex(u => u.email === email);
   if (idx >= 0) users[idx] = user; else users.push(user);
+  saveJson(USERS_FILE, users);
   const token = `mock-token-${id}`;
   return res.status(201).json({ user: { id, name: fullName, email, phone: phone || '', role: user.role }, token });
 }));
@@ -522,13 +531,16 @@ app.post('/api/auth/login', wrapAsync(async (req, res) => {
     return res.status(400).json({ message: 'Missing email or password' });
   }
   // Try external API first (server-to-server, no CORS)
-  const ext = await forwardAuth('/Auth/login', { email, password });
+  const ext = await forwardAuth('/Auth/login', { dto: {}, email, password });
   if (ext.ok) {
-    const extUser = ext.data.user || {};
-    const user = { id: extUser.id || Date.now(), name: extUser.name || email.split('@')[0], email, role: String(email).toLowerCase().includes("admin") ? 'Admin' : (extUser.role || 'Customer') };
+    const token = ext.data.token;
+    const jwtPayload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf-8'));
+    const userId = String(jwtPayload.UserId || jwtPayload.userId || '');
+    const user = { id: userId, name: email.split('@')[0], email, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer' };
     const idx = users.findIndex(u => u.email === email);
     if (idx >= 0) users[idx] = user; else users.push(user);
-    return res.json({ user, token: ext.data.token });
+    saveJson(USERS_FILE, users);
+    return res.json({ user, token });
   }
   // Fall back to local mock if external API is unreachable or the login endpoint doesn't exist (404)
   if (ext.message === 'External API unreachable' || ext.status === 404) {
@@ -540,6 +552,7 @@ app.post('/api/auth/login', wrapAsync(async (req, res) => {
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
     const token = `mock-token-${existingUser.id}`;
+    saveJson(USERS_FILE, users);
     return res.json({ user: { id: existingUser.id, name: existingUser.name, email: existingUser.email, role: existingUser.role }, token });
   }
   // External API rejected the credentials — forward its error
@@ -553,7 +566,6 @@ app.post('/api/auth/google', wrapAsync(async (req, res) => {
     return res.status(400).json({ message: 'Google credential is required' });
   }
 
-  // Decode the ID token JWT payload directly (base64 decode)
   let payload;
   try {
     const parts = credential.split('.');
@@ -569,70 +581,58 @@ app.post('/api/auth/google', wrapAsync(async (req, res) => {
     return res.status(401).json({ message: 'Invalid Google credential payload' });
   }
 
-  // Find existing user or create new one
   const email = formData?.email || payload.email;
   const firstName = formData?.firstName || payload.name || payload.given_name || email.split('@')[0];
   const lastName = formData?.lastName || payload.family_name || '';
   const phone = formData?.phone || '';
   const name = `${firstName} ${lastName}`.trim() || email.split('@')[0];
-  let user = users.find(u => u.email === email);
+  const picture = payload.picture || '';
+  const googlePassword = `google_${email}_${Date.now()}`;
 
-  if (!user && mode !== "signup") {
-    // User not found locally — check the external .NET API database
-    const ext = await forwardAuth('/Auth/login', { email, password: '__google_check__' });
-    const notFound = ext.status === 404 || (ext.message && /not found|not exist|not registered|unreachable/i.test(ext.message));
-    if (ext.ok || (ext.status && !notFound)) {
-      // User exists in external API (any non-404 response means the email was recognized)
-      user = {
-        id: ext.data?.user?.id || Date.now(),
-        name: ext.data?.user?.name || name,
-        email,
-        phone: phone || ext.data?.user?.phone || '',
-        password: `google_${Date.now()}`,
-        role: String(email).toLowerCase().includes("admin") ? 'Admin' : (ext.data?.user?.role || 'Customer'),
-        picture: payload.picture || '',
-        createdAt: new Date().toISOString(),
-      };
-      users.push(user);
-      saveJson(USERS_FILE, users);
+  // Try .NET API register first (signup) or login (existing user)
+  const reg = await forwardAuth('/Auth/register', { dto: {}, firstName, lastName, phone, email, password: googlePassword });
+  let dotNetToken = '';
+  let dotNetUserId = '';
+  let user = users.find(u => u.email === email);
+  if (reg.ok) {
+    // Registered → login to get JWT
+    const loginExt = await forwardAuth('/Auth/login', { dto: {}, email, password: googlePassword });
+    if (loginExt.ok) {
+      dotNetToken = loginExt.data.token;
+      const jwt = JSON.parse(Buffer.from(dotNetToken.split('.')[1], 'base64').toString('utf-8'));
+      dotNetUserId = String(jwt.UserId || jwt.userId || '');
+    }
+  } else if (reg.status !== 500 || !reg.message?.includes('UNIQUE KEY')) {
+    // .NET register failed for non-duplicate reason → try login (existing user might work)
+    const loginExt = await forwardAuth('/Auth/login', { dto: {}, email, password: googlePassword });
+    if (loginExt.ok) {
+      dotNetToken = loginExt.data.token;
+      const jwt = JSON.parse(Buffer.from(dotNetToken.split('.')[1], 'base64').toString('utf-8'));
+      dotNetUserId = String(jwt.UserId || jwt.userId || '');
     }
   }
 
+  if (dotNetToken && dotNetUserId) {
+    // .NET API user created/found — use real JWT
+    let existingUser = users.find(u => u.email === email);
+    const userRecord = { id: dotNetUserId, name, email, phone, password: googlePassword, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer', picture, createdAt: new Date().toISOString() };
+    if (existingUser) Object.assign(existingUser, userRecord);
+    else { users.push(userRecord); saveJson(USERS_FILE, users); }
+    return res.json({ token: dotNetToken, user: { id: dotNetUserId, email, name, role: userRecord.role, picture } });
+  }
+
+  // Fallback: create local user with mock token
   if (!user) {
-    // Login mode: reject if account doesn't exist anywhere
     if (mode !== "signup") {
       return res.status(404).json({ message: 'No account found with this Google email. Please register first.' });
     }
-    // Signup mode: create new user
     const id = Date.now();
-    user = {
-      id,
-      name,
-      email,
-      phone,
-      password: `google_${id}`,
-      role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer',
-      picture: payload.picture || '',
-      createdAt: new Date().toISOString(),
-    };
+    user = { id, name, email, phone, password: googlePassword, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer', picture, createdAt: new Date().toISOString() };
     users.push(user);
     saveJson(USERS_FILE, users);
   }
-
-  // Forward to the external .NET API to keep in sync (for both login and signup)
-  await forwardAuth('/Auth/register', {
-    firstName,
-    lastName,
-    phone,
-    email,
-    password: user.password,
-  }).catch(() => {});
-
   const token = `mock-token-${user.id}`;
-  return res.json({
-    token,
-    user: { id: user.id, email: user.email, name: user.name, role: user.role, picture: user.picture || '' },
-  });
+  return res.json({ token, user: { id: user.id, email: user.email, name: user.name, role: user.role, picture: user.picture || picture } });
 }));
 
 // Newsletter endpoints

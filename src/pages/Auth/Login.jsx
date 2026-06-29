@@ -35,26 +35,18 @@ export const Login = () => {
 
       try {
         // Try external .NET API first (dynamic: real database)
-        const response = await fetch(`${API_URL}/auth/login`, {
+        const loginRes = await fetch(`${API_URL}/auth/login`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: email.trim(), password }),
+          body: JSON.stringify({ dto: {}, email: email.trim(), password }),
         });
-
-        if (!response.ok) {
-          throw new Error('External API rejected');
-        }
-
-        data = await response.json();
-
-        const serverRole = data.user?.role || 'Customer';
-        normalizedUser = {
-          ...data.user,
-          name: data.user.name || email.trim().split('@')[0],
-          role: String(email.trim()).toLowerCase().includes("admin") ? 'Admin' : serverRole,
-        };
+        if (!loginRes.ok) throw new Error('External API rejected');
+        const loginData = await loginRes.json();
+        const jwt = JSON.parse(atob(loginData.token.split('.')[1]));
+        data = { token: loginData.token, user: { id: String(jwt.UserId || jwt.userId || ''), name: email.trim().split('@')[0], email: email.trim(), role: String(email.trim()).toLowerCase().includes("admin") ? 'Admin' : 'Customer' } };
+        normalizedUser = data.user;
       } catch (externalError) {
-        // Fallback to local mock server if external API is unreachable
+        // Fallback to local mock server
         const response = await axiosInstance.post("/api/auth/login", {
           email: email.trim(),
           password,

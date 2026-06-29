@@ -1,0 +1,20 @@
+[
+  {
+    "id": 1782723410547,
+    "name": "yash vaghasiya",
+    "email": "yashvaghasiya1812@gmail.com",
+    "phone": "9662315487",
+    "password": "yash123456",
+    "role": "Customer"
+  },
+  {
+    "id": "47",
+    "name": "yash vaghasiya",
+    "email": "yashvaghasiya2006@gmail.com",
+    "phone": "8849669921",
+    "password": "google_yashvaghasiya2006@gmail.com_1782723489612",
+    "role": "Customer",
+    "picture": "https://lh3.googleusercontent.com/a/ACg8ocLN0YjN7_5s_QENsvvlgwxBaKA-973FpgtCLnVzBeME7fieLQ=s96-c",
+    "createdAt": "2026-06-29T08:58:09.765Z"
+  }
+]

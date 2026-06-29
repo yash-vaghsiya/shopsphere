@@ -56,12 +56,126 @@ export const fetchOrdersThunk = createAsyncThunk(
   }
 );
 
+const decodeJwt = (token) => {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return payload;
+  } catch { return {}; }
+};
+
+const getDotNetUser = async () => {
+  const raw = localStorage.getItem('user');
+  let email = 'guest@shopsphere.com';
+  let name = 'Guest';
+  if (raw) {
+    try {
+      const u = JSON.parse(raw);
+      if (u && typeof u === 'object') {
+        email = u.email || u.Email || email;
+        name = u.name || u.Name || email.split('@')[0];
+      }
+    } catch {}
+  }
+  const existingToken = localStorage.getItem('token');
+  if (existingToken && !existingToken.startsWith('mock-')) {
+    const jwt = decodeJwt(existingToken);
+    const uid = String(jwt.UserId || jwt.userId || '');
+    if (uid) return { userId: uid, token: existingToken, email };
+  }
+  try {
+    const password = `auto_${Date.now()}`;
+    const regRes = await fetch(`${API_URL}/Auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dto: {}, firstName: name, lastName: '', phone: '', email, password }),
+    });
+    if (regRes.ok) {
+      const loginRes = await fetch(`${API_URL}/Auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dto: {}, email, password }),
+      });
+      if (loginRes.ok) {
+        const loginData = await loginRes.json();
+        const token = loginData.token;
+        if (token) {
+          localStorage.setItem('token', token);
+          const jwt = decodeJwt(token);
+          const userId = String(jwt.UserId || jwt.userId || email);
+          return { userId, token, email };
+        }
+      }
+    } else {
+      // User likely exists — try login with a direct POST (use existing token if any)
+      const loginRes = await fetch(`${API_URL}/Auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dto: {}, email, password }),
+      });
+      if (loginRes.ok) {
+        const loginData = await loginRes.json();
+        const token = loginData.token;
+        if (token) {
+          localStorage.setItem('token', token);
+          const jwt = decodeJwt(token);
+          const userId = String(jwt.UserId || jwt.userId || email);
+          return { userId, token, email };
+        }
+      }
+    }
+  } catch {}
+  return { userId: email, token: '', email };
+};
+
 export const createOrderThunk = createAsyncThunk(
   "orders/createOrder",
   async (orderData, thunkAPI) => {
+    let dotNetUserId = '';
+    let dotNetToken = '';
+    try {
+      const u = await getDotNetUser();
+      dotNetUserId = u.userId;
+      dotNetToken = u.token;
+    } catch {}
+    const sa = orderData.shippingAddress || {};
+    const dotNetPayload = {
+      UserId: dotNetUserId || 'guest@shopsphere.com',
+      OrderNumber: `ORD-${Date.now().toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`,
+      Total: Number(orderData.total) || 0,
+      Status: orderData.status || 'Pending',
+      PaymentMethod: orderData.paymentMethod || '',
+      ShippingAddress: JSON.stringify(sa),
+      ShippingPhone: sa.phone || '',
+      CreatedAt: new Date().toISOString(),
+    };
+    try {
+      const payloadStr = JSON.stringify(dotNetPayload);
+      console.log('[orderSlice] .NET payload:', payloadStr);
+      const response = await fetch(`${API_URL}/Orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(dotNetToken ? { Authorization: `Bearer ${dotNetToken}` } : {}) },
+        body: payloadStr,
+      });
+      if (response.ok) {
+        const text = await response.text();
+        const obj = text ? JSON.parse(text) : {};
+        const normalized = normalizeOrder(obj?.data ?? obj?.value ?? obj);
+        try {
+          if (obj?.id && obj.ownerToken) {
+            const existing = JSON.parse(localStorage.getItem('orderTokens') || '{}');
+            existing[String(obj.id)] = obj.ownerToken;
+            localStorage.setItem('orderTokens', JSON.stringify(existing));
+          }
+        } catch (e) {}
+        return normalized;
+      }
+      const errText = await response.text().catch(() => '(empty body)');
+      console.error('[orderSlice] .NET API returned', response.status, 'Body:', errText);
+    } catch (e) {
+      console.warn('[orderSlice] .NET API fetch failed, falling back to Express:', e);
+    }
     try {
       const response = await axiosInstance.post("/api/orders", orderData);
-      // If backend returned an owner token for guest orders, persist it locally mapped to the order id
       try {
         const data = response.data;
         if (data && data.id && data.ownerToken) {
@@ -69,10 +183,8 @@ export const createOrderThunk = createAsyncThunk(
           existing[String(data.id)] = data.ownerToken;
           localStorage.setItem('orderTokens', JSON.stringify(existing));
         }
-      } catch (e) {
-        // ignore storage errors
-      }
-      return response.data; // Expected: Order
+      } catch (e) {}
+      return normalizeOrder(response.data);
     } catch (error) {
       return thunkAPI.rejectWithValue(
         error.response?.data?.message || "Failed to purchase order"

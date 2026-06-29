@@ -36,10 +36,11 @@ export const Register = () => {
 
       try {
         // Try external .NET API first (dynamic: real database)
-        const response = await fetch(`${API_URL}/Auth/register`, {
+        const regRes = await fetch(`${API_URL}/Auth/register`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            dto: {},
             firstName: firstName.trim(),
             lastName: lastName.trim(),
             phone: phone.trim(),
@@ -47,22 +48,20 @@ export const Register = () => {
             password,
           }),
         });
-
-        if (!response.ok) {
-          throw new Error('External API rejected');
-        }
-
-        data = await response.json();
-
-        const serverRole = data.user?.role || 'Customer';
-        normalizedUser = {
-          ...data.user,
-          name: data.user.name || `${firstName.trim()} ${lastName.trim()}`.trim(),
-          phone: data.user.phone || phone.trim(),
-          role: String(email.trim()).toLowerCase().includes("admin") ? 'Admin' : serverRole,
-        };
+        if (!regRes.ok) throw new Error('External API rejected');
+        // Register succeeded — login to get JWT + user info
+        const loginRes = await fetch(`${API_URL}/Auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dto: {}, email: email.trim(), password }),
+        });
+        if (!loginRes.ok) throw new Error('Login after register failed');
+        const loginData = await loginRes.json();
+        const jwt = JSON.parse(atob(loginData.token.split('.')[1]));
+        data = { token: loginData.token, user: { id: String(jwt.UserId || jwt.userId || ''), name: `${firstName.trim()} ${lastName.trim()}`.trim(), email: email.trim(), phone: phone.trim(), role: String(email.trim()).toLowerCase().includes("admin") ? 'Admin' : 'Customer' } };
+        normalizedUser = data.user;
       } catch (externalError) {
-        // Fallback to local mock server if external API is unreachable
+        // Fallback to local mock server
         const response = await axiosInstance.post("/api/auth/register", {
           firstName: firstName.trim(),
           lastName: lastName.trim(),
