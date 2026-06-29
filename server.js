@@ -12,6 +12,7 @@ app.use(express.json());
 const DATA_DIR = path.resolve('data');
 const BROADCASTS_FILE = path.join(DATA_DIR, 'broadcasts.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const CATEGORIES_FILE = path.join(DATA_DIR, 'categories.json');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const loadJson = (file, fallback) => {
@@ -382,6 +383,36 @@ app.patch('/api/orders/:id', (req, res) => {
   if (updates.customerName !== undefined) order.customerName = updates.customerName;
   if (updates.shippingAddress !== undefined) order.shippingAddress = updates.shippingAddress;
   res.json(order);
+});
+
+let categories = loadJson(CATEGORIES_FILE, []);
+
+app.get('/api/categories', (req, res) => {
+  res.json(categories);
+});
+
+app.post('/api/categories', (req, res) => {
+  const { categoryName, name } = req.body || {};
+  const catName = categoryName || name || '';
+  if (!catName.trim()) {
+    return res.status(400).json({ message: 'Category name is required' });
+  }
+  if (categories.some(c => c.name?.toLowerCase() === catName.trim().toLowerCase())) {
+    return res.status(400).json({ message: 'Category already exists' });
+  }
+  const newCat = { id: Date.now(), name: catName.trim(), createdAt: new Date().toISOString() };
+  categories.unshift(newCat);
+  saveJson(CATEGORIES_FILE, categories);
+  res.status(201).json(newCat);
+});
+
+app.delete('/api/categories/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const idx = categories.findIndex(c => c.id === id);
+  if (idx === -1) return res.status(404).json({ message: 'Category not found' });
+  categories.splice(idx, 1);
+  saveJson(CATEGORIES_FILE, categories);
+  res.json({ message: 'Category deleted' });
 });
 
 app.patch('/api/products/:id/discount', (req, res) => {

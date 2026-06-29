@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { RootState } from "../../app/store";
 import { addCategory, removeCategory } from "../../features/products/productSlice";
@@ -6,6 +6,7 @@ import { Input } from "../../components/common/Input";
 import { Button } from "../../components/common/Button";
 import { Trash2, Plus, Box, FolderPlus } from "lucide-react";
 import { toast } from "react-hot-toast";
+import { axiosInstance } from "../../services/api";
 
 export const AdminCategories = () => {
   const dispatch = useDispatch();
@@ -13,7 +14,20 @@ export const AdminCategories = () => {
   const products = useSelector((state) => state.products.products);
   const [newCategory, setNewCategory] = useState("");
 
-  const handleCreateCategory = (e) => {
+  useEffect(() => {
+    axiosInstance.get("/api/categories").then(res => {
+      const existing = new Set(categoriesList.map(x => x.toLowerCase()));
+      if (res.data && Array.isArray(res.data)) {
+        res.data.forEach(c => {
+          if (c.name && !existing.has(c.name.toLowerCase())) {
+            dispatch(addCategory(c.name));
+          }
+        });
+      }
+    }).catch(() => {});
+  }, []);
+
+  const handleCreateCategory = async (e) => {
     e.preventDefault();
     const trimmed = newCategory.trim();
     
@@ -26,6 +40,10 @@ export const AdminCategories = () => {
       toast.error("Category already exists in stock catalog");
       return;
     }
+
+    try {
+      await axiosInstance.post("/api/categories", { name: trimmed });
+    } catch {}
 
     dispatch(addCategory(trimmed));
     setNewCategory("");

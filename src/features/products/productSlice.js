@@ -46,6 +46,7 @@ const normalizeProduct = (p) => {
     price: p.price ?? p.Price ?? p.unitPrice ?? p.UnitPrice ?? 0,
     image,
     category: p.category ?? p.Category ?? p.cat ?? p.Cat ?? 'General',
+    categoryId: p.categoryId ?? p.CategoryId ?? null,
     stock: p.stock ?? p.Stock ?? p.stockQuantity ?? p.StockQuantity ?? p.quantity ?? p.Quantity ?? 0,
     brand: p.brand ?? p.Brand ?? '',
     featured: p.featured ?? p.Featured ?? false,
@@ -103,14 +104,39 @@ const unwrapArray = (data) => {
 export const fetchProductsThunk = createAsyncThunk(
   "products/fetchProducts",
   async (params, thunkAPI) => {
+    let savedCategories;
+    try { savedCategories = JSON.parse(localStorage.getItem('productCategoryMap') || '{}'); } catch { savedCategories = {}; }
     try {
-      const response = await fetch(`${API_URL}/Products`);
-      if (response.ok) {
-        const data = await response.json();
+      const [prodResp, catResp] = await Promise.all([
+        fetch(`${API_URL}/Products`),
+        axiosInstance.get("/api/categories").catch(() => null),
+      ]);
+      if (prodResp.ok) {
+        const data = await prodResp.json();
         const arr = unwrapArray(data);
         if (arr && arr.length > 0) {
           const mapped = arr.map(normalizeProduct);
-          if (mapped.some((p) => p.image)) return filterDeleted(mapped);
+          if (mapped.some((p) => p.image)) {
+            const localCatMap = {};
+            if (catResp && catResp.data) {
+              const catArr = Array.isArray(catResp.data) ? catResp.data : catResp.data?.data ?? [];
+              catArr.forEach(c => { if (c.id != null && c.name) localCatMap[String(c.id)] = c.name; });
+            }
+            const catNames = Object.values(localCatMap);
+            mapped.forEach(p => {
+              const key = String(p.id);
+              if (savedCategories[key]) {
+                p.category = savedCategories[key];
+              } else if (p.categoryId != null) {
+                if (localCatMap[String(p.categoryId)]) {
+                  p.category = localCatMap[String(p.categoryId)];
+                } else if (p.category === 'General' && catNames.length === 1) {
+                  p.category = catNames[0];
+                }
+              }
+            });
+            return filterDeleted(mapped);
+          }
         }
       }
     } catch {}
@@ -130,11 +156,13 @@ export const fetchProductByIdThunk = createAsyncThunk(
   "products/fetchProductById",
   async (id, thunkAPI) => {
     try {
-      const response = await fetch(`${API_URL}/Products/${id}`);
-      if (response.ok) {
-        const data = await response.json();
+      const prodResp = await fetch(`${API_URL}/Products/${id}`);
+      if (prodResp.ok) {
+        const data = await prodResp.json();
         const obj = data?.data ?? data?.value ?? data;
-        return normalizeProduct(obj);
+        const normalized = normalizeProduct(obj);
+        try { const m = JSON.parse(localStorage.getItem('productCategoryMap') || '{}'); if (m[String(normalized.id)]) normalized.category = m[String(normalized.id)]; } catch {}
+        return normalized;
       }
     } catch {}
     try {
@@ -153,10 +181,24 @@ export const createProductThunk = createAsyncThunk(
   async (productData, thunkAPI) => {
     try {
       const token = localStorage.getItem("token");
+      let dotNetCategoryId = undefined;
+      try {
+        const catResp = await fetch(`${API_URL}/Categories`);
+        if (catResp.ok) {
+          const catData = await catResp.json();
+          const catArr = Array.isArray(catData) ? catData : catData?.data ?? catData?.$values ?? [];
+          const match = catArr.find(c => c.categoryName?.toLowerCase() === (productData.category || '').toLowerCase());
+          if (match) dotNetCategoryId = match.categoryId;
+        }
+      } catch {}
+      const body = {
+        ...productData, stockQuantity: productData.stock, imageUrl: productData.image,
+        ...(dotNetCategoryId !== undefined ? { categoryId: dotNetCategoryId } : {}),
+      };
       const response = await fetch(`${API_URL}/Products`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ ...productData, stockQuantity: productData.stock, imageUrl: productData.image }),
+        body: JSON.stringify(body),
       });
       if (response.ok) {
         const text = await response.text();
@@ -165,14 +207,20 @@ export const createProductThunk = createAsyncThunk(
         if (data) {
           const obj = data?.data ?? data?.value ?? data;
           const normalized = normalizeProduct(obj);
-          return { ...normalized, image: normalized.image || productData.image || '' };
+          const result = { ...normalized, category: productData.category || normalized.category, image: normalized.image || productData.image || '' };
+          try { const m = JSON.parse(localStorage.getItem('productCategoryMap') || '{}'); m[String(result.id)] = result.category; localStorage.setItem('productCategoryMap', JSON.stringify(m)); } catch {}
+          return result;
         }
-        return { ...productData, id: Date.now(), image: productData.image || '' };
+        const tempId = Date.now();
+        try { const m = JSON.parse(localStorage.getItem('productCategoryMap') || '{}'); m[String(tempId)] = productData.category || 'General'; localStorage.setItem('productCategoryMap', JSON.stringify(m)); } catch {}
+        return { ...productData, category: productData.category || 'General', id: tempId, image: productData.image || '' };
       }
     } catch {}
     try {
       const response = await axiosInstance.post("/api/products", productData);
-      return normalizeProduct(response.data);
+      const result = normalizeProduct(response.data);
+      try { const m = JSON.parse(localStorage.getItem('productCategoryMap') || '{}'); m[String(result.id)] = result.category || productData.category || 'General'; localStorage.setItem('productCategoryMap', JSON.stringify(m)); } catch {}
+      return result;
     } catch (error) {
       return thunkAPI.rejectWithValue(
         error.response?.data?.message || "Failed to add product"

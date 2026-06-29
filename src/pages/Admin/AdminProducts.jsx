@@ -77,6 +77,17 @@ export const AdminProducts = () => {
         image: editImage.trim() || undefined,
       };
 
+      let dotNetCategoryId = undefined;
+      try {
+        const catResp = await fetch(`${API_URL}/Categories`);
+        if (catResp.ok) {
+          const catData = await catResp.json();
+          const catArr = Array.isArray(catData) ? catData : catData?.data ?? catData?.$values ?? [];
+          const match = catArr.find(c => c.categoryName?.toLowerCase() === editCategory.trim().toLowerCase());
+          if (match) dotNetCategoryId = match.categoryId;
+        }
+      } catch {}
+
       const dotNetBody = {
         name: editName.trim(),
         stockQuantity: parsedStock,
@@ -84,6 +95,7 @@ export const AdminProducts = () => {
         brand: editBrand.trim(),
         description: editDescription.trim(),
         imageUrl: editImage.trim() || undefined,
+        ...(dotNetCategoryId !== undefined ? { categoryId: dotNetCategoryId } : {}),
       };
 
       let res;
