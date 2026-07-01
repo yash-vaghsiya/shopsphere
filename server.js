@@ -207,16 +207,21 @@ app.delete('/api/coupons/:id', (req, res) => {
 });
 
 app.get('/api/broadcasts', (req, res) => {
-  const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
-  const now = Date.now();
-  for (let i = broadcasts.length - 1; i >= 0; i--) {
-    const age = now - new Date(broadcasts[i].createdAt).getTime();
-    if (age > TWENTY_FOUR_HOURS) {
-      broadcasts.splice(i, 1);
+  try {
+    const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    for (let i = broadcasts.length - 1; i >= 0; i--) {
+      const age = now - new Date(broadcasts[i].createdAt).getTime();
+      if (age > TWENTY_FOUR_HOURS) {
+        broadcasts.splice(i, 1);
+      }
     }
+    saveJson(BROADCASTS_FILE, broadcasts);
+    res.json(broadcasts);
+  } catch (err) {
+    console.error('[broadcasts] Error:', err);
+    res.status(500).json({ message: 'Internal server error' });
   }
-  saveJson(BROADCASTS_FILE, broadcasts);
-  res.json(broadcasts);
 });
 
 app.post('/api/broadcasts', (req, res) => {
@@ -388,6 +393,14 @@ const cacheDotNetUser = (email, result) => {
   dotNetUserCache.set(email, result);
 };
 
+const saveDotNetPassword = (email, pwd) => {
+  const idx = users.findIndex(u => u.email === email);
+  if (idx >= 0 && !users[idx].password) {
+    users[idx].password = pwd;
+    saveJson(USERS_FILE, users);
+  }
+};
+
 const ensureDotNetUser = async (email) => {
   try {
     if (!email) return null;
@@ -405,12 +418,12 @@ const ensureDotNetUser = async (email) => {
     ])];
     for (const pwd of passwords) {
       let result = await dotNetAuth(email, pwd);
-      if (result) { cacheDotNetUser(email, result); return result; }
-      await dotNetRegister(email, pwd);
+      if (result) { saveDotNetPassword(email, pwd); cacheDotNetUser(email, result); return result; }
+      const regRes = await dotNetRegister(email, pwd);
       result = await dotNetAuth(email, pwd);
-      if (result) { cacheDotNetUser(email, result); return result; }
+      if (result) { saveDotNetPassword(email, pwd); cacheDotNetUser(email, result); return result; }
     }
-  } catch {}
+  } catch (err) { console.error(`[ensureDotNetUser] threw:`, err); }
   return null;
 };
 
@@ -422,54 +435,54 @@ app.post('/api/orders/proxy', async (req, res) => {
       return res.status(400).json({ message: 'Customer details and items are required.' });
     }
     const userEmail = order.email || '';
-    let dotNetUser;
-    try {
-      dotNetUser = await ensureDotNetUser(userEmail);
-    } catch (euErr) {
-      console.error('[server] ensureDotNetUser threw:', euErr);
-      dotNetUser = null;
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    const jwtPayload = decodeJwtPayload(token);
+    let dotNetUserId = jwtPayload.UserId || jwtPayload.userId || '';
+    let dotNetToken = token;
+    if (!dotNetUserId) {
+      // No valid JWT — try ensureDotNetUser or register fallback
+      let dotNetUser;
+      try { dotNetUser = await ensureDotNetUser(userEmail); } catch { dotNetUser = null; }
+      if (!dotNetUser || !dotNetUser.userId) {
+        try {
+          const pwd = `auto_${userEmail}`;
+          await dotNetRegister(userEmail, pwd);
+          dotNetUser = await dotNetAuth(userEmail, pwd);
+          if (dotNetUser) saveDotNetPassword(userEmail, pwd);
+        } catch {}
+      }
+      if (dotNetUser && dotNetUser.userId) {
+        dotNetUserId = dotNetUser.userId;
+        dotNetToken = dotNetUser.token;
+      }
     }
-    if (!dotNetUser || !dotNetUser.userId) {
-      // .NET API auth unavailable — fall back to Express-local order
-      console.log(`[server] .NET API auth failed for ${userEmail} — creating order locally`);
+    if (!dotNetUserId) {
+      // All auth paths failed — create order locally as last resort
       const localOrder = {
-        id: Date.now(),
-        createdAt: new Date().toISOString(),
-        status: order.status || 'Pending',
-        customerName: order.customerName || '',
-        email: userEmail,
-        items: order.items,
-        subtotal: Number(order.subtotal) || 0,
-        shipping: Number(order.shipping) || 0,
-        tax: Number(order.tax) || 0,
-        discount: Number(order.discount) || 0,
-        discountPercent: Number(order.discountPercent) || 0,
-        total: Number(order.total) || 0,
-        paymentMethod: order.paymentMethod || '',
-        couponCode: order.couponCode || null,
+        id: Date.now(), createdAt: new Date().toISOString(), status: order.status || 'Pending',
+        customerName: order.customerName || '', email: userEmail, items: order.items,
+        subtotal: Number(order.subtotal) || 0, shipping: Number(order.shipping) || 0,
+        tax: Number(order.tax) || 0, discount: Number(order.discount) || 0,
+        discountPercent: Number(order.discountPercent) || 0, total: Number(order.total) || 0,
+        paymentMethod: order.paymentMethod || '', couponCode: order.couponCode || null,
         shippingAddress: order.shippingAddress || {},
       };
       orders.push(localOrder);
       return res.status(201).json(localOrder);
     }
     const orderItems = (order.items || []).map(it => ({
-      productId: it.productId || it.id || 0,
-      name: it.name || '',
-      price: it.price || 0,
-      quantity: it.quantity || 1,
-      image: it.image || '',
+      productId: it.productId || it.id || 0, name: it.name || '', price: it.price || 0,
+      quantity: it.quantity || 1, image: it.image || '',
     }));
     let shippingAddressStr = '{}';
     try { shippingAddressStr = JSON.stringify({ ...(order.shippingAddress || {}), _items: orderItems }); } catch (e) { shippingAddressStr = JSON.stringify({ _items: orderItems }); }
     const dotNetPayload = {
-      UserId: dotNetUser.userId,
+      UserId: dotNetUserId,
       OrderNumber: `ORD-${Date.now().toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`,
-      Total: Number(order.total) || 0,
-      Status: order.status || 'Pending',
-      PaymentMethod: order.paymentMethod || '',
-      OrderItems: orderItems,
-      ShippingAddress: shippingAddressStr,
-      CreatedAt: new Date().toISOString(),
+      Total: Number(order.total) || 0, Status: order.status || 'Pending',
+      PaymentMethod: order.paymentMethod || '', OrderItems: orderItems,
+      ShippingAddress: shippingAddressStr, CreatedAt: new Date().toISOString(),
       CustomerName: order.customerName || '',
       ProductName: orderItems.map(it => it.name).join(' | ') || '',
       Quantity: orderItems.reduce((sum, it) => sum + it.quantity, 0) || 0,
@@ -478,22 +491,19 @@ app.post('/api/orders/proxy', async (req, res) => {
     try {
       dotNetRes = await fetch(`${EXTERNAL_API}/Orders`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${dotNetUser.token}` },
+        headers: { 'Content-Type': 'application/json', ...(dotNetToken ? { Authorization: `Bearer ${dotNetToken}` } : {}) },
         body: JSON.stringify(dotNetPayload),
       });
     } catch (fetchErr) {
-      console.error('[server] .NET API Orders fetch threw:', fetchErr.message);
       return res.status(502).json({ message: 'Order server unreachable.' });
     }
     if (dotNetRes.ok) {
       const text = await dotNetRes.text();
       let obj;
       try { obj = text ? JSON.parse(text) : {}; } catch { obj = null; }
-      console.log(`[server] Order created in SQL DB (${dotNetRes.status})`);
       return res.status(201).json(obj?.data ?? obj?.value ?? obj ?? { success: true, message: text || 'Order created' });
     }
     const errText = await dotNetRes.text().catch(() => '');
-    console.error(`[server] .NET API Orders POST failed (${dotNetRes.status}): ${errText}`);
     const statusCode = dotNetRes.status >= 500 ? 502 : dotNetRes.status;
     return res.status(statusCode).json({ message: `Order server error: ${errText.slice(0, 300) || 'Unknown error'}` });
   } catch (e) {
@@ -510,8 +520,27 @@ app.put('/api/orders/:id/status', async (req, res) => {
     if (!id || !status) {
       return res.status(400).json({ message: 'Order ID and status are required.' });
     }
-    const dotNetUser = await ensureDotNetUser(email || '');
-    if (!dotNetUser || !dotNetUser.userId) {
+    const authHeader = req.headers.authorization || '';
+    const authToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    const jwtPayload = decodeJwtPayload(authToken);
+    let dotNetUserId = jwtPayload.UserId || jwtPayload.userId || '';
+    let dotNetToken = authToken;
+    if (!dotNetUserId) {
+      let dotNetUser = await ensureDotNetUser(email || '');
+      if (!dotNetUser || !dotNetUser.userId) {
+        try {
+          const pwd = `auto_${email || ''}`;
+          await dotNetRegister(email || '', pwd);
+          dotNetUser = await dotNetAuth(email || '', pwd);
+          if (dotNetUser) saveDotNetPassword(email, pwd);
+        } catch (e) {}
+      }
+      if (dotNetUser && dotNetUser.userId) {
+        dotNetUserId = dotNetUser.userId;
+        dotNetToken = dotNetUser.token;
+      }
+    }
+    if (!dotNetUserId) {
       // .NET API auth unavailable — fall back to Express-local update
       const order = orders.find((item) => String(item.id) === String(id));
       if (order) { order.status = status; return res.json({ id: Number(id), status }); }
@@ -519,7 +548,7 @@ app.put('/api/orders/:id/status', async (req, res) => {
     }
     const dotNetRes = await fetch(`${EXTERNAL_API}/Orders/${id}/status?status=${encodeURIComponent(status)}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${dotNetUser.token}` },
+      headers: { 'Content-Type': 'application/json', ...(dotNetToken ? { Authorization: `Bearer ${dotNetToken}` } : {}) },
     });
     if (dotNetRes.ok) {
       console.log(`[server] Order ${id} status updated to ${status} in SQL DB`);
@@ -696,7 +725,7 @@ app.post('/api/auth/register', wrapAsync(async (req, res) => {
       const token = loginExt.data.token;
       const jwtPayload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf-8'));
       const userId = String(jwtPayload.UserId || jwtPayload.userId || '');
-      const user = { id: userId, name: fullName, email, phone, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer' };
+      const user = { id: userId, name: fullName, email, phone, password, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer' };
       const idx = users.findIndex(u => u.email === email);
       if (idx >= 0) users[idx] = user; else users.push(user);
       saveJson(USERS_FILE, users);
@@ -725,7 +754,7 @@ app.post('/api/auth/login', wrapAsync(async (req, res) => {
     const token = ext.data.token;
     const jwtPayload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf-8'));
     const userId = String(jwtPayload.UserId || jwtPayload.userId || '');
-    const user = { id: userId, name: email.split('@')[0], email, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer' };
+    const user = { id: userId, name: email.split('@')[0], email, password, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer' };
     const idx = users.findIndex(u => u.email === email);
     if (idx >= 0) users[idx] = user; else users.push(user);
     saveJson(USERS_FILE, users);
@@ -969,6 +998,13 @@ app.use(
   })
 );
 
+app.use((err, req, res, next) => {
+  console.error('[server] Unhandled error:', err);
+  if (!res.headersSent) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 app.get('*', (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
@@ -978,4 +1014,5 @@ app.get('*', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 Project started! Open http://localhost:${PORT} to view it.`);
+  console.log(`   .NET API target: ${EXTERNAL_API}`);
 });
