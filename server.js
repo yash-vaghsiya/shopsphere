@@ -928,7 +928,28 @@ app.post('/api/contact/queries/:id/reply', (req, res) => {
 });
 
 // Users endpoint (admin customers)
-app.get('/api/users', (req, res) => {
+app.get('/api/users', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    const dotNetRes = await fetch(`${EXTERNAL_API}/customers`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    });
+    if (dotNetRes.ok) {
+      const data = await dotNetRes.json();
+      const raw = Array.isArray(data) ? data : data?.data ?? data?.value ?? [];
+      const mapped = raw.map(c => ({
+        id: c.id,
+        name: [c.firstName, c.lastName].filter(Boolean).join(' ').trim() || c.email?.split('@')[0] || 'User',
+        email: c.email || '',
+        role: String(c.email).toLowerCase().includes('admin') ? 'Admin' : 'Customer',
+        phone: c.phone || '',
+        isActive: c.isActive,
+        createdAt: c.createdAt,
+      }));
+      return res.json(mapped);
+    }
+  } catch {}
   res.json(users);
 });
 
