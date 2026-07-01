@@ -34,7 +34,7 @@ import { toast } from "react-hot-toast";
 
 export const DashboardVisuals = ({ products = [], orders = [], topProducts = [] }) => {
   const [mounted, setMounted] = useState(false);
-  const [revenueTimeframe, setRevenueTimeframe] = useState("6m");
+  const [revenueTimeframe, setRevenueTimeframe] = useState("12m");
   const [hoveredProduct, setHoveredProduct] = useState(null);
 
   useEffect(() => {
@@ -275,6 +275,16 @@ export const DashboardVisuals = ({ products = [], orders = [], topProducts = [] 
           
           <div className="flex items-center bg-gray-50 dark:bg-gray-990 border border-gray-150 dark:border-gray-850 rounded-xl p-1 shrink-0 self-start">
             <button
+              onClick={() => setRevenueTimeframe("12m")}
+              className={`px-3 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg border-0 cursor-pointer transition-all ${
+                revenueTimeframe === "12m"
+                  ? "bg-blue-600 text-white shadow-xs"
+                  : "text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+              }`}
+            >
+              12 Months
+            </button>
+            <button
               onClick={() => setRevenueTimeframe("6m")}
               className={`px-3 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg border-0 cursor-pointer transition-all ${
                 revenueTimeframe === "6m"
@@ -284,23 +294,13 @@ export const DashboardVisuals = ({ products = [], orders = [], topProducts = [] 
             >
               6 Months
             </button>
-            <button
-              onClick={() => setRevenueTimeframe("3m")}
-              className={`px-3 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg border-0 cursor-pointer transition-all ${
-                revenueTimeframe === "3m"
-                  ? "bg-blue-600 text-white shadow-xs"
-                  : "text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-              }`}
-            >
-              3 Months
-            </button>
           </div>
         </div>
 
         <div className="w-full h-72 min-w-0">
           {mounted ? (
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={activeTimelineData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
+              <AreaChart data={monthlyTimelineData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
                 <defs>
                   <linearGradient id="visColorRev" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#2563eb" stopOpacity={0.25} />
