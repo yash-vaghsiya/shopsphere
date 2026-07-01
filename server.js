@@ -107,7 +107,7 @@ const broadcasts = loadJson(BROADCASTS_FILE, [
   },
 ]);
 
-const orders = [];
+const orders = []; // in-memory only for backward-compatible order viewing; no JSON persistence
 
 app.get('/api/products', (req, res) => {
   res.json(products);
@@ -341,36 +341,198 @@ app.get('/api/orders/:id', (req, res) => {
   res.json(order);
 });
 
-app.post('/api/orders', (req, res) => {
-  const order = req.body || {};
-  if (!order.customerName || !order.items || !Array.isArray(order.items) || order.items.length === 0) {
-    return res.status(400).json({ message: 'Invalid order payload. Customer details and items are required.' });
+// External API base URL for dynamic forwarding (server-to-server, no CORS)
+const EXTERNAL_API = process.env.VITE_API_URL || 'https://localhost:7015/api';
+
+const decodeJwtPayload = (token) => {
+  try { return JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString()); } catch { return {}; }
+};
+
+// In-memory cache of .NET API auth results per email (avoids re-auth on every request)
+const dotNetUserCache = new Map();
+
+const dotNetAuth = async (email, password) => {
+  try {
+    const res = await fetch(`${EXTERNAL_API}/Auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dto: {}, email, password }),
+    });
+    if (res.ok) {
+      const d = await res.json();
+      const token = d.token;
+      if (!token || typeof token !== 'string' || token.split('.').length !== 3) return null;
+      const payload = decodeJwtPayload(token);
+      const userId = payload.UserId || payload.userId || '';
+      if (!userId) return null;
+      return { token, userId };
+    }
+  } catch {}
+  return null;
+};
+
+const dotNetRegister = async (email, password) => {
+  try {
+    const name = email.split('@')[0];
+    const res = await fetch(`${EXTERNAL_API}/Auth/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dto: {}, firstName: name, lastName: '', phone: '', email, password }),
+    });
+    return res;
+  } catch { return null; }
+};
+
+const cacheDotNetUser = (email, result) => {
+  const payload = decodeJwtPayload(result.token);
+  const exp = (parseInt(payload.exp, 10) || 0) * 1000;
+  result.expiresAt = exp || (Date.now() + 3600000);
+  dotNetUserCache.set(email, result);
+};
+
+const ensureDotNetUser = async (email) => {
+  try {
+    if (!email) return null;
+    const cached = dotNetUserCache.get(email);
+    if (cached) {
+      const exp = cached.expiresAt || 0;
+      if (Date.now() < exp) return cached;
+      dotNetUserCache.delete(email);
+    }
+    const localUser = users.find(u => u.email === email);
+    const passwords = [...new Set([
+      ...(localUser?.password ? [localUser.password] : []),
+      `auto_${email}`,
+      `google_${email}`,
+    ])];
+    for (const pwd of passwords) {
+      let result = await dotNetAuth(email, pwd);
+      if (result) { cacheDotNetUser(email, result); return result; }
+      await dotNetRegister(email, pwd);
+      result = await dotNetAuth(email, pwd);
+      if (result) { cacheDotNetUser(email, result); return result; }
+    }
+  } catch {}
+  return null;
+};
+
+// Proxy: create order directly on .NET API (SQL Server) — no special service account needed
+app.post('/api/orders/proxy', async (req, res) => {
+  try {
+    const order = req.body || {};
+    if (!order.customerName || !order.items || !Array.isArray(order.items) || order.items.length === 0) {
+      return res.status(400).json({ message: 'Customer details and items are required.' });
+    }
+    const userEmail = order.email || '';
+    let dotNetUser;
+    try {
+      dotNetUser = await ensureDotNetUser(userEmail);
+    } catch (euErr) {
+      console.error('[server] ensureDotNetUser threw:', euErr);
+      dotNetUser = null;
+    }
+    if (!dotNetUser || !dotNetUser.userId) {
+      // .NET API auth unavailable — fall back to Express-local order
+      console.log(`[server] .NET API auth failed for ${userEmail} — creating order locally`);
+      const localOrder = {
+        id: Date.now(),
+        createdAt: new Date().toISOString(),
+        status: order.status || 'Pending',
+        customerName: order.customerName || '',
+        email: userEmail,
+        items: order.items,
+        subtotal: Number(order.subtotal) || 0,
+        shipping: Number(order.shipping) || 0,
+        tax: Number(order.tax) || 0,
+        discount: Number(order.discount) || 0,
+        discountPercent: Number(order.discountPercent) || 0,
+        total: Number(order.total) || 0,
+        paymentMethod: order.paymentMethod || '',
+        couponCode: order.couponCode || null,
+        shippingAddress: order.shippingAddress || {},
+      };
+      orders.push(localOrder);
+      return res.status(201).json(localOrder);
+    }
+    const orderItems = (order.items || []).map(it => ({
+      productId: it.productId || it.id || 0,
+      name: it.name || '',
+      price: it.price || 0,
+      quantity: it.quantity || 1,
+      image: it.image || '',
+    }));
+    let shippingAddressStr = '{}';
+    try { shippingAddressStr = JSON.stringify({ ...(order.shippingAddress || {}), _items: orderItems }); } catch (e) { shippingAddressStr = JSON.stringify({ _items: orderItems }); }
+    const dotNetPayload = {
+      UserId: dotNetUser.userId,
+      OrderNumber: `ORD-${Date.now().toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`,
+      Total: Number(order.total) || 0,
+      Status: order.status || 'Pending',
+      PaymentMethod: order.paymentMethod || '',
+      OrderItems: orderItems,
+      ShippingAddress: shippingAddressStr,
+      CreatedAt: new Date().toISOString(),
+      CustomerName: order.customerName || '',
+      ProductName: orderItems.map(it => it.name).join(' | ') || '',
+      Quantity: orderItems.reduce((sum, it) => sum + it.quantity, 0) || 0,
+    };
+    let dotNetRes;
+    try {
+      dotNetRes = await fetch(`${EXTERNAL_API}/Orders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${dotNetUser.token}` },
+        body: JSON.stringify(dotNetPayload),
+      });
+    } catch (fetchErr) {
+      console.error('[server] .NET API Orders fetch threw:', fetchErr.message);
+      return res.status(502).json({ message: 'Order server unreachable.' });
+    }
+    if (dotNetRes.ok) {
+      const text = await dotNetRes.text();
+      let obj;
+      try { obj = text ? JSON.parse(text) : {}; } catch { obj = null; }
+      console.log(`[server] Order created in SQL DB (${dotNetRes.status})`);
+      return res.status(201).json(obj?.data ?? obj?.value ?? obj ?? { success: true, message: text || 'Order created' });
+    }
+    const errText = await dotNetRes.text().catch(() => '');
+    console.error(`[server] .NET API Orders POST failed (${dotNetRes.status}): ${errText}`);
+    const statusCode = dotNetRes.status >= 500 ? 502 : dotNetRes.status;
+    return res.status(statusCode).json({ message: `Order server error: ${errText.slice(0, 300) || 'Unknown error'}` });
+  } catch (e) {
+    console.error('[server] Order proxy UNCAUGHT error:', e?.stack || e);
+    return res.status(500).json({ message: 'Internal order processing error.' });
   }
+});
 
-  const { email: headerEmail, userId: headerUserId } = getUserFromHeader(req);
-  const ownerToken = String(Date.now()) + '-' + Math.floor(Math.random() * 1000000);
-  const newOrder = {
-    id: Date.now(),
-    createdAt: new Date().toISOString(),
-    status: order.status || 'Pending',
-    customerName: order.customerName || 'Guest Shopper',
-    email: headerEmail || order.email || 'guest@shopsphere.com',
-    userId: headerUserId || order.userId || null,
-    ownerToken,
-    items: order.items,
-    subtotal: Number(order.subtotal) || 0,
-    shipping: Number(order.shipping) || 0,
-    tax: Number(order.tax) || 0,
-    discount: Number(order.discount) || 0,
-    discountPercent: Number(order.discountPercent) || 0,
-    total: Number(order.total) || 0,
-    paymentMethod: order.paymentMethod || 'COD',
-    couponCode: order.couponCode || null,
-    shippingAddress: order.shippingAddress || {},
-  };
-
-  orders.push(newOrder);
-  res.status(201).json(newOrder);
+// Proxy: update order status on .NET API (SQL Server)
+app.put('/api/orders/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, email } = req.body || {};
+    if (!id || !status) {
+      return res.status(400).json({ message: 'Order ID and status are required.' });
+    }
+    const dotNetUser = await ensureDotNetUser(email || '');
+    if (!dotNetUser || !dotNetUser.userId) {
+      // .NET API auth unavailable — fall back to Express-local update
+      const order = orders.find((item) => String(item.id) === String(id));
+      if (order) { order.status = status; return res.json({ id: Number(id), status }); }
+      return res.status(404).json({ message: 'Order not found locally.' });
+    }
+    const dotNetRes = await fetch(`${EXTERNAL_API}/Orders/${id}/status?status=${encodeURIComponent(status)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${dotNetUser.token}` },
+    });
+    if (dotNetRes.ok) {
+      console.log(`[server] Order ${id} status updated to ${status} in SQL DB`);
+      return res.json({ id: Number(id), status });
+    }
+    const errText = await dotNetRes.text().catch(() => '');
+    console.error(`[server] .NET API status update failed (${dotNetRes.status}): ${errText}`);
+    const statusCode = dotNetRes.status >= 500 ? 502 : dotNetRes.status;
+    return res.status(statusCode).json({ message: `Order server error: ${errText.slice(0, 300) || 'Unknown error'}` });
+  } catch (e) {
+    console.error('[server] Status update proxy error:', e.message);
+    return res.status(502).json({ message: 'Order server unreachable.' });
+  }
 });
 
 app.patch('/api/orders/:id', (req, res) => {
@@ -450,9 +612,6 @@ const contactQueries = [];
 
 // In-memory user store for mock auth fallback (loaded from disk)
 const users = loadJson(USERS_FILE, []);
-
-// External API base URL for dynamic forwarding (server-to-server, no CORS)
-const EXTERNAL_API = process.env.VITE_API_URL || 'https://localhost:7015/api';
 
 // Helper: forward auth request to external API
 const forwardAuth = async (endpoint, body) => {
@@ -617,7 +776,7 @@ app.post('/api/auth/google', wrapAsync(async (req, res) => {
   const phone = formData?.phone || '';
   const name = `${firstName} ${lastName}`.trim() || email.split('@')[0];
   const picture = payload.picture || '';
-  const googlePassword = `google_${email}_${Date.now()}`;
+  const googlePassword = `google_${email}`;
 
   // Try .NET API register first (signup) or login (existing user)
   const reg = await forwardAuth('/Auth/register', { dto: {}, firstName, lastName, phone, email, password: googlePassword });
@@ -646,8 +805,8 @@ app.post('/api/auth/google', wrapAsync(async (req, res) => {
     // .NET API user created/found — use real JWT
     let existingUser = users.find(u => u.email === email);
     const userRecord = { id: dotNetUserId, name, email, phone, password: googlePassword, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer', picture, createdAt: new Date().toISOString() };
-    if (existingUser) Object.assign(existingUser, userRecord);
-    else { users.push(userRecord); saveJson(USERS_FILE, users); }
+    if (existingUser) Object.assign(existingUser, userRecord); else users.push(userRecord);
+    saveJson(USERS_FILE, users);
     return res.json({ token: dotNetToken, user: { id: dotNetUserId, email, name, role: userRecord.role, picture } });
   }
 

@@ -71,167 +71,47 @@ const normalizeOrder = (o) => {
 export const fetchOrdersThunk = createAsyncThunk(
   "orders/fetchOrders",
   async (_, thunkAPI) => {
+    const allOrders = [];
+    const seenIds = new Set();
     try {
       const response = await fetch(`${API_URL}/Orders`);
       if (response.ok) {
         const data = await response.json();
         const arr = unwrapArray(data);
-        if (arr) return arr.map(normalizeOrder);
+        if (arr) {
+          arr.map(normalizeOrder).forEach(o => {
+            if (!seenIds.has(o.id)) { seenIds.add(o.id); allOrders.push(o); }
+          });
+        }
       }
     } catch {}
     try {
       const response = await axiosInstance.get("/api/orders");
       const arr = Array.isArray(response.data) ? response.data : unwrapArray(response.data) ?? [];
-      return arr.map(normalizeOrder);
+      arr.map(normalizeOrder).forEach(o => {
+        if (!seenIds.has(o.id)) { seenIds.add(o.id); allOrders.push(o); }
+      });
     } catch (error) {
-      return thunkAPI.rejectWithValue(
-        error.response?.data?.message || "Failed to load orders"
-      );
+      if (allOrders.length === 0) {
+        return thunkAPI.rejectWithValue(
+          error.response?.data?.message || "Failed to load orders"
+        );
+      }
     }
+    return allOrders;
   }
 );
-
-const decodeJwt = (token) => {
-  try {
-    const payload = JSON.parse(atob(token.split('.')[1]));
-    return payload;
-  } catch { return {}; }
-};
-
-const getDotNetUser = async () => {
-  const raw = localStorage.getItem('user');
-  let email = 'guest@shopsphere.com';
-  let name = 'Guest';
-  if (raw) {
-    try {
-      const u = JSON.parse(raw);
-      if (u && typeof u === 'object') {
-        email = u.email || u.Email || email;
-        name = u.name || u.Name || email.split('@')[0];
-      }
-    } catch {}
-  }
-  const existingToken = localStorage.getItem('token');
-  if (existingToken && !existingToken.startsWith('mock-')) {
-    const jwt = decodeJwt(existingToken);
-    const uid = String(jwt.UserId || jwt.userId || '');
-    if (uid) return { userId: uid, token: existingToken, email };
-  }
-  try {
-    const password = `auto_${Date.now()}`;
-    const regRes = await fetch(`${API_URL}/Auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dto: {}, firstName: name, lastName: '', phone: '', email, password }),
-    });
-    if (regRes.ok) {
-      const loginRes = await fetch(`${API_URL}/Auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dto: {}, email, password }),
-      });
-      if (loginRes.ok) {
-        const loginData = await loginRes.json();
-        const token = loginData.token;
-        if (token) {
-          localStorage.setItem('token', token);
-          const jwt = decodeJwt(token);
-          const userId = String(jwt.UserId || jwt.userId || email);
-          return { userId, token, email };
-        }
-      }
-    } else {
-      // User likely exists — try login with a direct POST (use existing token if any)
-      const loginRes = await fetch(`${API_URL}/Auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dto: {}, email, password }),
-      });
-      if (loginRes.ok) {
-        const loginData = await loginRes.json();
-        const token = loginData.token;
-        if (token) {
-          localStorage.setItem('token', token);
-          const jwt = decodeJwt(token);
-          const userId = String(jwt.UserId || jwt.userId || email);
-          return { userId, token, email };
-        }
-      }
-    }
-  } catch {}
-  return { userId: email, token: '', email };
-};
 
 export const createOrderThunk = createAsyncThunk(
   "orders/createOrder",
   async (orderData, thunkAPI) => {
-    let dotNetUserId = '';
-    let dotNetToken = '';
     try {
-      const u = await getDotNetUser();
-      dotNetUserId = u.userId;
-      dotNetToken = u.token;
-    } catch {}
-    const sa = orderData.shippingAddress || {};
-    const orderItems = (orderData.items || []).map(it => ({
-      productId: it.productId || it.id || 0,
-      name: it.name || '',
-      price: it.price || 0,
-      quantity: it.quantity || 1,
-      image: it.image || '',
-    }));
-    const dotNetPayload = {
-      UserId: String(dotNetUserId || ''),
-      OrderNumber: `ORD-${Date.now().toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`,
-      Total: Number(orderData.total) || 0,
-      Status: orderData.status || 'Pending',
-      PaymentMethod: orderData.paymentMethod || '',
-      ShippingAddress: JSON.stringify({ ...sa, _items: orderItems }),
-      CreatedAt: new Date().toISOString(),
-      CustomerName: sa.fullName || orderData.customerName || '',
-      ProductName: orderItems.map(it => it.name).join(' | ') || '',
-      Quantity: orderItems.reduce((sum, it) => sum + it.quantity, 0) || 0,
-    };
-    try {
-      const payloadStr = JSON.stringify(dotNetPayload);
-      console.log('[orderSlice] .NET payload:', payloadStr);
-      const response = await fetch(`${API_URL}/Orders`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(dotNetToken ? { Authorization: `Bearer ${dotNetToken}` } : {}) },
-        body: payloadStr,
-      });
-      if (response.ok) {
-        const text = await response.text();
-        const obj = text ? JSON.parse(text) : {};
-        const normalized = normalizeOrder(obj?.data ?? obj?.value ?? obj);
-        try {
-          if (obj?.id && obj.ownerToken) {
-            const existing = JSON.parse(localStorage.getItem('orderTokens') || '{}');
-            existing[String(obj.id)] = obj.ownerToken;
-            localStorage.setItem('orderTokens', JSON.stringify(existing));
-          }
-        } catch (e) {}
-        return normalized;
-      }
-      const errText = await response.text().catch(() => '(empty body)');
-      console.error('[orderSlice] .NET API returned', response.status, 'Body:', errText);
-    } catch (e) {
-      console.warn('[orderSlice] .NET API fetch failed, falling back to Express:', e);
-    }
-    try {
-      const response = await axiosInstance.post("/api/orders", orderData);
-      try {
-        const data = response.data;
-        if (data && data.id && data.ownerToken) {
-          const existing = JSON.parse(localStorage.getItem('orderTokens') || '{}');
-          existing[String(data.id)] = data.ownerToken;
-          localStorage.setItem('orderTokens', JSON.stringify(existing));
-        }
-      } catch (e) {}
-      return normalizeOrder(response.data);
+      const response = await axiosInstance.post("/api/orders/proxy", orderData);
+      const data = response.data;
+      return normalizeOrder(data);
     } catch (error) {
       return thunkAPI.rejectWithValue(
-        error.response?.data?.message || "Failed to purchase order"
+        error.response?.data?.message || error.message || "Failed to submit order"
       );
     }
   }
@@ -241,10 +121,9 @@ export const updateOrderStatusThunk = createAsyncThunk(
   "orders/updateOrderStatus",
   async ({ id, status }, thunkAPI) => {
     try {
-      const response = await fetch(`${API_URL}/Orders/${id}/status?status=${encodeURIComponent(status)}`, {
-        method: "PUT",
-      });
-      if (response.ok) return { id, status };
+      const user = JSON.parse(localStorage.getItem('user') || '{}');
+      const response = await axiosInstance.put(`/api/orders/${id}/status`, { status, email: user.email || '' });
+      if (response.status === 200) return { id, status };
     } catch {}
     try {
       const response = await axiosInstance.patch(`/api/orders/${id}`, { status });
