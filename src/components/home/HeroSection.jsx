@@ -5,43 +5,13 @@ import { motion, AnimatePresence } from "motion/react";
 
 const SLIDES = [
   {
-    id: 1,
-    name: "Zenith Carbon-V X-1 Watch",
-    brand: "Zenith",
-    price: "₹14,999",
     image: "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600&auto=format&fit=crop&q=80",
-    category: "Wearables",
-    description: "Exquisite carbon fiber chassis with custom biometric tracking sensors and 7-day technical energy reserve.",
-    rating: "4.8",
-    reviews: 218,
-    badge: "Top Seller",
-    link: "/product/1",
   },
   {
-    id: 2,
-    name: "Aerial Nova Soundbuds",
-    brand: "AuraTone",
-    price: "₹7,499",
     image: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600&auto=format&fit=crop&q=80",
-    category: "Audio",
-    description: "True-audio hi-res spatial acoustics wireless earbuds with hybrid ANC 45dB and 36hr high-res streaming.",
-    rating: "4.9",
-    reviews: 164,
-    badge: "Best Value",
-    link: "/product/2",
   },
   {
-    id: 3,
-    name: "Vortex Apex Mechanical Keyboard",
-    brand: "Crescent Labs",
-    price: "₹6,200",
     image: "https://images.unsplash.com/photo-1587829741301-dc798b83add3?w=600&auto=format&fit=crop&q=80",
-    category: "Accessories",
-    description: "Modular mechanical switches with dynamic lighting profiles and premium alloy chassis.",
-    rating: "4.7",
-    reviews: 138,
-    badge: "Fan Favorite",
-    link: "/product/3",
   }
 ];
 
