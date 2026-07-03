@@ -127,20 +127,6 @@ const getBearerToken = (req) => {
   return auth.startsWith('Bearer ') ? auth.slice(7) : '';
 };
 
-// Helper: normalize .NET API discount properties to camelCase
-const normalizeDiscount = (d) => ({
-  id: d.id ?? d.Id ?? d.discountId ?? d.DiscountId ?? d.discountID,
-  code: d.code ?? d.Code ?? d.couponCode ?? d.CouponCode ?? String(d.discountId ?? ''),
-  discountType: d.discountType ?? d.DiscountType ?? (d.discountPercent != null ? 'percentage' : undefined),
-  discountValue: d.discountValue ?? d.DiscountValue ?? d.discountPercent ?? d.DiscountPercent ?? 0,
-  minCartAmount: d.minCartAmount ?? d.MinCartAmount ?? 0,
-  expiryDate: d.expiryDate ?? d.ExpiryDate ?? d.endDate ?? d.EndDate,
-  description: d.description ?? d.Description ?? '',
-  isActive: d.isActive ?? d.IsActive ?? true,
-  usageCount: d.usageCount ?? d.UsageCount ?? 0,
-  maxUsage: d.maxUsage ?? d.MaxUsage ?? 0,
-});
-
 // Helper: fetch with timeout
 const fetchWithTimeout = async (url, options, timeoutMs = 5000) => {
   const controller = new AbortController();
@@ -163,7 +149,7 @@ app.get('/api/coupons', async (req, res) => {
     if (dotNetRes.ok) {
       const data = await dotNetRes.json();
       const raw = Array.isArray(data) ? data : data?.$values ?? data?.data ?? data?.value ?? [];
-      return res.json(raw.map(normalizeDiscount));
+      return res.json(raw.map(fromDotNetDiscount));
     }
     res.status(dotNetRes.status).json(await dotNetRes.json().catch(() => ({ message: 'Proxy error' })));
   } catch {
@@ -198,15 +184,26 @@ app.post('/api/coupons/validate', (req, res) => {
 const toDotNetDiscount = (body) => {
   const d = {};
   if (body.code != null) d.couponCode = body.code;
-  if (body.discountType != null) {
-    if (body.discountValue != null) d.discountPercent = Number(body.discountValue);
-  } else if (body.discountValue != null) {
-    d.discountPercent = Number(body.discountValue);
-  }
+  if (body.discountType === 'percentage' && body.discountValue != null) d.discountPercent = Number(body.discountValue);
+  else if (body.discountValue != null) d.discountPercent = Number(body.discountValue);
   if (body.expiryDate != null && body.expiryDate !== '') d.endDate = body.expiryDate;
   if (body.isActive != null) d.isActive = body.isActive;
   return d;
 };
+
+// Helper: convert .NET API discount back to camelCase (same as normalizeDiscount)
+const fromDotNetDiscount = (d) => ({
+  id: d.id ?? d.discountId ?? d.DiscountId,
+  code: d.code ?? d.couponCode ?? d.Code ?? d.CouponCode ?? '',
+  discountType: d.discountType ?? d.DiscountType ?? (d.discountPercent != null ? 'percentage' : undefined),
+  discountValue: d.discountValue ?? d.DiscountValue ?? d.discountPercent ?? d.DiscountPercent ?? 0,
+  minCartAmount: d.minCartAmount ?? d.MinCartAmount ?? 0,
+  expiryDate: d.expiryDate ?? d.ExpiryDate ?? d.endDate ?? d.EndDate,
+  description: d.description ?? d.Description ?? '',
+  isActive: d.isActive ?? d.IsActive ?? true,
+  usageCount: d.usageCount ?? d.UsageCount ?? 0,
+  maxUsage: d.maxUsage ?? d.MaxUsage ?? 0,
+});
 
 // Proxy: POST /api/coupons → .NET API POST /Discounts (with date sanitization)
 app.post('/api/coupons', async (req, res) => {
@@ -221,32 +218,47 @@ app.post('/api/coupons', async (req, res) => {
       body: JSON.stringify(dotNetBody),
     });
     const data = await dotNetRes.json().catch(() => ({}));
-    if (dotNetRes.ok) return res.status(201).json(data);
+    if (dotNetRes.ok) return res.status(201).json(fromDotNetDiscount(data));
     res.status(dotNetRes.status).json(await dotNetRes.json().catch(() => data));
   } catch (e) {
     res.status(502).json({ message: 'External API unreachable' });
   }
 });
 
-// Proxy: PUT /api/coupons/:id → .NET API PUT /Discounts/{id} (with date sanitization)
+// Proxy: PUT /api/coupons/:id → .NET API PUT /Discounts/{id}
+// Fetches existing discount first, merges changes, then PUTs full object
 app.put('/api/coupons/:id', async (req, res) => {
   try {
     const token = getBearerToken(req);
-    const body = toDotNetDiscount(req.body);
-    const dotNetBody = { dto: {}, ...body };
-    if (dotNetBody.endDate == null) delete dotNetBody.endDate;
+    const headers = { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' };
+
+    // 1. Fetch existing discount from .NET API
+    const getRes = await fetchWithTimeout(`${EXTERNAL_API}/Discounts/${req.params.id}`, { headers });
+    if (!getRes.ok) {
+      const errText = await getRes.text().catch(() => '');
+      return res.status(getRes.status).json({ message: errText || 'Discount not found' });
+    }
+    const existing = await getRes.json();
+
+    // 2. Merge incoming changes (e.g. isActive toggle) into existing fields
+    const changes = toDotNetDiscount(req.body);
+    const merged = { ...existing, ...changes };
+    // Ensure discountId is present in the body for .NET API
+    if (merged.discountId == null) merged.discountId = Number(req.params.id);
+
+    // 3. PUT full merged object
     const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Discounts/${req.params.id}`, {
       method: 'PUT',
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
-      body: JSON.stringify(dotNetBody),
+      headers,
+      body: JSON.stringify({ dto: {}, ...merged }),
     });
     const text = await dotNetRes.text();
     try {
       const data = JSON.parse(text);
-      if (dotNetRes.ok) return res.json(data);
+      if (dotNetRes.ok) return res.json(fromDotNetDiscount(data));
       return res.status(dotNetRes.status).json(data);
     } catch {
-      if (dotNetRes.ok) return res.json({ message: text });
+      if (dotNetRes.ok) return res.json(fromDotNetDiscount(merged));
       return res.status(dotNetRes.status).json({ message: text });
     }
   } catch (e) {
