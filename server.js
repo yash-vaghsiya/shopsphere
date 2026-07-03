@@ -121,8 +121,54 @@ app.get('/api/products/:id', (req, res) => {
   res.json(product);
 });
 
-app.get('/api/coupons', (req, res) => {
-  res.json(coupons);
+// Helper: extract Bearer token from incoming request
+const getBearerToken = (req) => {
+  const auth = req.headers.authorization || '';
+  return auth.startsWith('Bearer ') ? auth.slice(7) : '';
+};
+
+// Helper: normalize .NET API discount properties to camelCase
+const normalizeDiscount = (d) => ({
+  id: d.id ?? d.Id ?? d.discountId ?? d.DiscountId ?? d.discountID,
+  code: d.code ?? d.Code ?? d.couponCode ?? d.CouponCode ?? String(d.discountId ?? ''),
+  discountType: d.discountType ?? d.DiscountType ?? (d.discountPercent != null ? 'percentage' : undefined),
+  discountValue: d.discountValue ?? d.DiscountValue ?? d.discountPercent ?? d.DiscountPercent ?? 0,
+  minCartAmount: d.minCartAmount ?? d.MinCartAmount ?? 0,
+  expiryDate: d.expiryDate ?? d.ExpiryDate ?? d.endDate ?? d.EndDate,
+  description: d.description ?? d.Description ?? '',
+  isActive: d.isActive ?? d.IsActive ?? true,
+  usageCount: d.usageCount ?? d.UsageCount ?? 0,
+  maxUsage: d.maxUsage ?? d.MaxUsage ?? 0,
+});
+
+// Helper: fetch with timeout
+const fetchWithTimeout = async (url, options, timeoutMs = 5000) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+// Proxy: GET /api/coupons → .NET API GET /Discounts
+app.get('/api/coupons', async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Discounts`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+    });
+    if (dotNetRes.ok) {
+      const data = await dotNetRes.json();
+      const raw = Array.isArray(data) ? data : data?.$values ?? data?.data ?? data?.value ?? [];
+      return res.json(raw.map(normalizeDiscount));
+    }
+    res.status(dotNetRes.status).json(await dotNetRes.json().catch(() => ({ message: 'Proxy error' })));
+  } catch {
+    res.status(502).json({ message: 'External API unreachable' });
+  }
 });
 
 app.post('/api/coupons/validate', (req, res) => {
@@ -148,62 +194,79 @@ app.post('/api/coupons/validate', (req, res) => {
   res.json(coupon);
 });
 
-app.post('/api/coupons', (req, res) => {
-  const coupon = req.body;
-  if (!coupon || !coupon.code || !coupon.discountType || !coupon.discountValue) {
-    return res.status(400).json({ message: 'Missing coupon details' });
+// Helper: convert camelCase discount to .NET API format
+const toDotNetDiscount = (body) => {
+  const d = {};
+  if (body.code != null) d.couponCode = body.code;
+  if (body.discountType != null) {
+    if (body.discountValue != null) d.discountPercent = Number(body.discountValue);
+  } else if (body.discountValue != null) {
+    d.discountPercent = Number(body.discountValue);
   }
+  if (body.expiryDate != null && body.expiryDate !== '') d.endDate = body.expiryDate;
+  if (body.isActive != null) d.isActive = body.isActive;
+  return d;
+};
 
-  const code = String(coupon.code).trim().toUpperCase();
-  const alreadyExists = coupons.some((item) => item.code === code);
-  if (alreadyExists) {
-    return res.status(400).json({ message: 'Coupon code already exists' });
+// Proxy: POST /api/coupons → .NET API POST /Discounts (with date sanitization)
+app.post('/api/coupons', async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    const body = toDotNetDiscount(req.body);
+    const dotNetBody = { dto: {}, ...body };
+    if (dotNetBody.endDate == null) delete dotNetBody.endDate;
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Discounts`, {
+      method: 'POST',
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+      body: JSON.stringify(dotNetBody),
+    });
+    const data = await dotNetRes.json().catch(() => ({}));
+    if (dotNetRes.ok) return res.status(201).json(data);
+    res.status(dotNetRes.status).json(await dotNetRes.json().catch(() => data));
+  } catch (e) {
+    res.status(502).json({ message: 'External API unreachable' });
   }
-
-  const id = Date.now();
-  const newCoupon = {
-    id,
-    code,
-    discountType: coupon.discountType,
-    discountValue: Number(coupon.discountValue),
-    description: coupon.description || '',
-    minCartAmount: Number(coupon.minCartAmount) || 0,
-    expiryDate: coupon.expiryDate || null,
-    isActive: coupon.isActive !== false,
-    usageCount: coupon.usageCount || 0,
-  };
-
-  coupons.push(newCoupon);
-  res.status(201).json(newCoupon);
 });
 
-app.patch('/api/coupons/:id', (req, res) => {
-  const couponId = Number(req.params.id);
-  const coupon = coupons.find((item) => item.id === couponId);
-  if (!coupon) {
-    return res.status(404).json({ message: 'Coupon not found' });
+// Proxy: PUT /api/coupons/:id → .NET API PUT /Discounts/{id} (with date sanitization)
+app.put('/api/coupons/:id', async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    const body = toDotNetDiscount(req.body);
+    const dotNetBody = { dto: {}, ...body };
+    if (dotNetBody.endDate == null) delete dotNetBody.endDate;
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Discounts/${req.params.id}`, {
+      method: 'PUT',
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+      body: JSON.stringify(dotNetBody),
+    });
+    const text = await dotNetRes.text();
+    try {
+      const data = JSON.parse(text);
+      if (dotNetRes.ok) return res.json(data);
+      return res.status(dotNetRes.status).json(data);
+    } catch {
+      if (dotNetRes.ok) return res.json({ message: text });
+      return res.status(dotNetRes.status).json({ message: text });
+    }
+  } catch (e) {
+    res.status(502).json({ message: 'External API unreachable' });
   }
-
-  const updates = req.body || {};
-  if (updates.code) coupon.code = String(updates.code).trim().toUpperCase();
-  if (updates.discountType) coupon.discountType = updates.discountType;
-  if (updates.discountValue !== undefined) coupon.discountValue = Number(updates.discountValue);
-  if (updates.minCartAmount !== undefined) coupon.minCartAmount = Number(updates.minCartAmount);
-  if (updates.expiryDate !== undefined) coupon.expiryDate = updates.expiryDate || null;
-  if (updates.description !== undefined) coupon.description = updates.description;
-  if (updates.isActive !== undefined) coupon.isActive = Boolean(updates.isActive);
-
-  res.json(coupon);
 });
 
-app.delete('/api/coupons/:id', (req, res) => {
-  const couponId = Number(req.params.id);
-  const index = coupons.findIndex((item) => item.id === couponId);
-  if (index === -1) {
-    return res.status(404).json({ message: 'Coupon not found' });
+// Proxy: DELETE /api/coupons/:id → .NET API DELETE /Discounts/{id}
+app.delete('/api/coupons/:id', async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Discounts/${req.params.id}`, {
+      method: 'DELETE',
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+    });
+    if (dotNetRes.ok) return res.json({ message: 'Coupon removed successfully' });
+    res.status(dotNetRes.status).json(await dotNetRes.json().catch(() => ({ message: 'Delete failed' })));
+  } catch {
+    res.status(502).json({ message: 'External API unreachable' });
   }
-  coupons.splice(index, 1);
-  res.json({ message: 'Coupon removed successfully' });
 });
 
 app.get('/api/broadcasts', (req, res) => {

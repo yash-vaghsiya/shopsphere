@@ -4,26 +4,35 @@ import { fetchProductsThunk } from "../../features/products/productSlice";
 import { formatCurrency } from "../../utils/format";
 import { toast } from "react-hot-toast";
 
+const unwrapArray = (data) => {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === 'object') {
+    if (Array.isArray(data.$values)) return data.$values;
+    if (Array.isArray(data.value)) return data.value;
+    if (Array.isArray(data.data)) return data.data;
+    if (Array.isArray(data.items)) return data.items;
+    if (Array.isArray(data.records)) return data.records;
+    if (Array.isArray(data.result)) return data.result;
+  }
+  return null;
+};
+
 const getAuthHeaders = () => {
   const headers = { "Content-Type": "application/json" };
   try {
     const token = localStorage.getItem("token");
     if (token) headers["Authorization"] = `Bearer ${token}`;
-    const user = JSON.parse(localStorage.getItem("user") || "{}");
-    if (user.email) headers["X-User-Email"] = user.email;
-    if (user.role) headers["X-User-Role"] = user.role;
-    if (user.id) headers["X-User-Id"] = String(user.id);
   } catch {}
   return headers;
 };
 
-// Discount API helper — route through local server (server proxies to external API)
+// Discount API helper — routes through Express proxy (handles date sanitization)
 const discountFetch = async (path, options = {}) => {
   const opts = {
     ...options,
     headers: { ...getAuthHeaders(), ...options.headers },
   };
-  return fetch(path, opts);
+  return fetch(`/api/coupons${path}`, opts);
 };
 
 import { 
@@ -96,19 +105,32 @@ export const AdminDiscounts = () => {
   const [updatingDiscountId, setUpdatingDiscountId] = useState(null);
 
   const normalizeId = (item) => {
-    if (item.id != null) return item;
-    const idKey = ["_id", "couponId", "discountId", "Id", "ID"].find((k) => item[k] != null);
-    if (idKey) item.id = item[idKey];
+    if (item.id == null) {
+      const idKey = ["_id", "couponId", "discountId", "Id", "ID"].find((k) => item[k] != null);
+      if (idKey) item.id = item[idKey];
+    }
+    if (item.code == null) {
+      const codeKey = ["Code", "couponCode", "CouponCode"].find((k) => item[k] != null);
+      if (codeKey) item.code = item[codeKey];
+    }
+    if (item.discountType == null && item.DiscountType) item.discountType = item.DiscountType;
+    if (item.discountValue == null && item.DiscountValue != null) item.discountValue = item.DiscountValue;
+    if (item.isActive == null && item.IsActive != null) item.isActive = item.IsActive;
+    if (item.expiryDate == null && item.ExpiryDate) item.expiryDate = item.ExpiryDate;
+    if (item.description == null && item.Description) item.description = item.Description;
+    if (item.minCartAmount == null && item.MinCartAmount != null) item.minCartAmount = item.MinCartAmount;
+    if (item.usageCount == null && item.UsageCount != null) item.usageCount = item.UsageCount;
+    if (item.maxUsage == null && item.MaxUsage != null) item.maxUsage = item.MaxUsage;
     return item;
   };
 
-  // Fetch Coupons Database info from both external API and local server
+  // Fetch Coupons from .NET API Discounts
   const fetchCoupons = async () => {
     try {
       setCouponsLoading(true);
-      const res = await discountFetch("/api/coupons");
+      const res = await discountFetch("");
       if (res.ok) {
-        const data = await res.json();
+        const data = unwrapArray(await res.json());
         setCoupons(Array.isArray(data) ? data.map(normalizeId) : []);
       } else {
         setCoupons([]);
@@ -148,13 +170,13 @@ export const AdminDiscounts = () => {
         discountType,
         discountValue: Number(discountValue),
         minCartAmount: minCartAmount ? Number(minCartAmount) : 0,
-        expiryDate,
         description,
         isActive: editingCoupon ? editingCoupon.isActive : true
       };
+      if (expiryDate) payload.expiryDate = expiryDate;
 
-      const url = editingCoupon ? `/api/coupons/${editingCoupon.id}` : "/api/coupons";
-      const method = editingCoupon ? "PATCH" : "POST";
+      const url = editingCoupon ? `/${editingCoupon.id}` : "";
+      const method = editingCoupon ? "PUT" : "POST";
 
       const res = await discountFetch(url, {
         method,
@@ -189,8 +211,8 @@ export const AdminDiscounts = () => {
   // Toggle active/inactive state of a promotion
   const handleToggleCoupon = async (coupon) => {
     try {
-      const res = await discountFetch(`/api/coupons/${coupon.id}`, {
-        method: "PATCH",
+      const res = await discountFetch(`/${coupon.id}`, {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isActive: !coupon.isActive })
       });
@@ -210,7 +232,7 @@ export const AdminDiscounts = () => {
     if (!window.confirm(`Are you sure you want to permanently retire coupon ${name}?`)) return;
 
     try {
-      const res = await discountFetch(`/api/coupons/${id}`, { method: "DELETE" });
+      const res = await discountFetch(`/${id}`, { method: "DELETE" });
       if (res.ok) {
         toast.success(`Coupon ${name} removed from system catalog`);
         fetchCoupons();
