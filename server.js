@@ -13,6 +13,7 @@ const DATA_DIR = path.resolve('data');
 const BROADCASTS_FILE = path.join(DATA_DIR, 'broadcasts.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const CATEGORIES_FILE = path.join(DATA_DIR, 'categories.json');
+const COUPON_EXTRAS_FILE = path.join(DATA_DIR, 'coupon-extras.json');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const loadJson = (file, fallback) => {
@@ -127,6 +128,31 @@ const getBearerToken = (req) => {
   return auth.startsWith('Bearer ') ? auth.slice(7) : '';
 };
 
+// Coupon extras store: fields not supported by .NET API (minCartAmount, maxUsage, description, usageCount)
+let couponExtras = loadJson(COUPON_EXTRAS_FILE, {});
+const saveCouponExtras = () => saveJson(COUPON_EXTRAS_FILE, couponExtras);
+
+const getExtraFields = (id) => couponExtras[id] ?? {};
+const setExtraFields = (id, fields) => {
+  const clean = {};
+  for (const [k, v] of Object.entries(fields)) {
+    if (v !== undefined) clean[k] = v;
+  }
+  couponExtras[id] = { ...couponExtras[id], ...clean };
+  saveCouponExtras();
+};
+
+// Merge .NET API discount with local extras
+const mergeExtras = (d) => {
+  const id = d.id;
+  const extras = getExtraFields(id);
+  d.minCartAmount = extras.minCartAmount ?? d.minCartAmount ?? 0;
+  d.maxUsage = extras.maxUsage ?? d.maxUsage ?? 0;
+  d.usageCount = extras.usageCount ?? d.usageCount ?? 0;
+  d.description = extras.description ?? d.description ?? '';
+  return d;
+};
+
 // Helper: fetch with timeout
 const fetchWithTimeout = async (url, options, timeoutMs = 5000) => {
   const controller = new AbortController();
@@ -149,7 +175,7 @@ app.get('/api/coupons', async (req, res) => {
     if (dotNetRes.ok) {
       const data = await dotNetRes.json();
       const raw = Array.isArray(data) ? data : data?.$values ?? data?.data ?? data?.value ?? [];
-      return res.json(raw.map(fromDotNetDiscount));
+      return res.json(raw.map(d => mergeExtras(fromDotNetDiscount(d))));
     }
     res.status(dotNetRes.status).json(await dotNetRes.json().catch(() => ({ message: 'Proxy error' })));
   } catch {
@@ -205,11 +231,12 @@ const fromDotNetDiscount = (d) => ({
   maxUsage: d.maxUsage ?? d.MaxUsage ?? 0,
 });
 
-// Proxy: POST /api/coupons → .NET API POST /Discounts (with date sanitization)
+// Proxy: POST /api/coupons → .NET API POST /Discounts
 app.post('/api/coupons', async (req, res) => {
   try {
     const token = getBearerToken(req);
-    const body = toDotNetDiscount(req.body);
+    const { minCartAmount, maxUsage, description, ...rest } = req.body;
+    const body = toDotNetDiscount(rest);
     const dotNetBody = { dto: {}, ...body };
     if (dotNetBody.endDate == null) delete dotNetBody.endDate;
     const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Discounts`, {
@@ -217,9 +244,27 @@ app.post('/api/coupons', async (req, res) => {
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
       body: JSON.stringify(dotNetBody),
     });
-    const data = await dotNetRes.json().catch(() => ({}));
-    if (dotNetRes.ok) return res.status(201).json(fromDotNetDiscount(data));
-    res.status(dotNetRes.status).json(await dotNetRes.json().catch(() => data));
+    if (!dotNetRes.ok) return res.status(dotNetRes.status).json({ message: 'Discount creation failed' });
+    // After successful creation, fetch list to get the discount ID
+    try {
+      const getRes = await fetchWithTimeout(`${EXTERNAL_API}/Discounts`, {
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+      });
+      if (getRes.ok) {
+        const listData = await getRes.json();
+        const list = Array.isArray(listData) ? listData : listData?.$values ?? [];
+        const found = list.find(d => d.couponCode === body.couponCode);
+        if (found) {
+          const id = found.discountId ?? found.id ?? found.DiscountId;
+          setExtraFields(id, {
+            minCartAmount: Number(minCartAmount) || 0,
+            maxUsage: Number(maxUsage) || 0,
+            description: description || '',
+          });
+        }
+      }
+    } catch {}
+    return res.status(201).json({ message: 'Discount Created' });
   } catch (e) {
     res.status(502).json({ message: 'External API unreachable' });
   }
@@ -231,23 +276,31 @@ app.put('/api/coupons/:id', async (req, res) => {
   try {
     const token = getBearerToken(req);
     const headers = { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' };
+    const id = req.params.id;
+
+    // Save local extras (fields .NET API doesn't support)
+    const { minCartAmount, maxUsage, description, ...rest } = req.body;
+    setExtraFields(id, {
+      minCartAmount: minCartAmount != null ? Number(minCartAmount) : undefined,
+      maxUsage: maxUsage != null ? Number(maxUsage) : undefined,
+      description: description != null ? description : undefined,
+    });
 
     // 1. Fetch existing discount from .NET API
-    const getRes = await fetchWithTimeout(`${EXTERNAL_API}/Discounts/${req.params.id}`, { headers });
+    const getRes = await fetchWithTimeout(`${EXTERNAL_API}/Discounts/${id}`, { headers });
     if (!getRes.ok) {
       const errText = await getRes.text().catch(() => '');
       return res.status(getRes.status).json({ message: errText || 'Discount not found' });
     }
     const existing = await getRes.json();
 
-    // 2. Merge incoming changes (e.g. isActive toggle) into existing fields
-    const changes = toDotNetDiscount(req.body);
+    // 2. Merge incoming changes into existing fields
+    const changes = toDotNetDiscount(rest);
     const merged = { ...existing, ...changes };
-    // Ensure discountId is present in the body for .NET API
-    if (merged.discountId == null) merged.discountId = Number(req.params.id);
+    if (merged.discountId == null) merged.discountId = Number(id);
 
     // 3. PUT full merged object
-    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Discounts/${req.params.id}`, {
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Discounts/${id}`, {
       method: 'PUT',
       headers,
       body: JSON.stringify({ dto: {}, ...merged }),
@@ -255,10 +308,10 @@ app.put('/api/coupons/:id', async (req, res) => {
     const text = await dotNetRes.text();
     try {
       const data = JSON.parse(text);
-      if (dotNetRes.ok) return res.json(fromDotNetDiscount(data));
+      if (dotNetRes.ok) return res.json(mergeExtras(fromDotNetDiscount(data)));
       return res.status(dotNetRes.status).json(data);
     } catch {
-      if (dotNetRes.ok) return res.json(fromDotNetDiscount(merged));
+      if (dotNetRes.ok) return res.json(mergeExtras(fromDotNetDiscount(merged)));
       return res.status(dotNetRes.status).json({ message: text });
     }
   } catch (e) {

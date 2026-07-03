@@ -1,0 +1,12 @@
+{
+  "12": {
+    "minCartAmount": 6000,
+    "description": "Best Offer "
+  },
+  "16": {},
+  "17": {
+    "minCartAmount": 1000,
+    "maxUsage": 0,
+    "description": "Limit test"
+  }
+}
