@@ -69,6 +69,7 @@ export const AdminDiscounts = () => {
   const [discountType, setDiscountType] = useState("percentage");
   const [discountValue, setDiscountValue] = useState("");
   const [minCartAmount, setMinCartAmount] = useState("");
+  const [maxUsage, setMaxUsage] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
   const [description, setDescription] = useState("");
   const [formSubmitting, setFormSubmitting] = useState(false);
@@ -79,6 +80,7 @@ export const AdminDiscounts = () => {
     setDiscountType(coupon.discountType);
     setDiscountValue(coupon.discountValue.toString());
     setMinCartAmount(coupon.minCartAmount ? coupon.minCartAmount.toString() : "");
+    setMaxUsage(coupon.maxUsage ? coupon.maxUsage.toString() : "");
     setExpiryDate(coupon.expiryDate || "");
     setDescription(coupon.description || "");
   };
@@ -89,6 +91,7 @@ export const AdminDiscounts = () => {
     setDiscountType("percentage");
     setDiscountValue("");
     setMinCartAmount("");
+    setMaxUsage("");
     setExpiryDate("");
     setDescription("");
   };
@@ -170,6 +173,7 @@ export const AdminDiscounts = () => {
         discountType,
         discountValue: Number(discountValue),
         minCartAmount: minCartAmount ? Number(minCartAmount) : 0,
+        maxUsage: maxUsage ? Number(maxUsage) : 0,
         description,
         isActive: editingCoupon ? editingCoupon.isActive : true
       };
@@ -194,6 +198,7 @@ export const AdminDiscounts = () => {
         setCode("");
         setDiscountValue("");
         setMinCartAmount("");
+        setMaxUsage("");
         setExpiryDate("");
         setDescription("");
         fetchCoupons();
@@ -516,6 +521,19 @@ export const AdminDiscounts = () => {
                   />
                 </div>
 
+                {/* MAX USAGE LIMIT */}
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold text-gray-400">Maximum Usage Limit</label>
+                  <input
+                    type="number"
+                    placeholder="e.g. 100 (0 for unlimited)"
+                    value={maxUsage}
+                    onChange={(e) => setMaxUsage(e.target.value)}
+                    className="w-full bg-gray-55 dark:bg-gray-990 border border-gray-250 dark:border-gray-750 focus:border-blue-500 rounded-lg py-2.5 px-3 focus:outline-none"
+                    min="0"
+                  />
+                </div>
+
                 {/* EXPIRATION DATE */}
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold text-gray-400">Expiry Date (Optional)</label>
@@ -681,6 +699,12 @@ export const AdminDiscounts = () => {
                             <span>Aggregate Usages:</span>
                             <span className="text-gray-800 dark:text-gray-200 font-bold bg-gray-50 dark:bg-gray-850 px-1.5 py-0.5 rounded">
                               {c.usageCount} times redeemed
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span>Maximum Usage:</span>
+                            <span className="text-gray-800 dark:text-gray-200">
+                              {c.maxUsage ? `${c.maxUsage} redemptions` : "Unlimited"}
                             </span>
                           </div>
                         </div>

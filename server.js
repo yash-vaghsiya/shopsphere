@@ -34,6 +34,41 @@ const getUserFromHeader = (req) => {
   return { email, role, userId, orderToken };
 };
 
+// Coupon extras store — merges into .NET API responses for fields the API may not persist
+const couponExtras = loadJson(COUPON_EXTRAS_FILE, {});
+
+const getCouponExtras = (coupon) => {
+  const id = coupon?.id ?? coupon?.discountId ?? coupon?.DiscountId;
+  const code = (coupon?.code ?? coupon?.couponCode ?? coupon?.Code ?? coupon?.CouponCode ?? '').trim().toUpperCase();
+  const byId = id != null ? couponExtras[String(id)] : null;
+  const byCode = code ? couponExtras[`_code_${code}`] : null;
+  return { ...(byCode || {}), ...(byId || {}) };
+};
+
+const setCouponExtras = (coupon) => {
+  const id = coupon?.id ?? coupon?.discountId ?? coupon?.DiscountId;
+  const code = (coupon?.code ?? coupon?.couponCode ?? coupon?.Code ?? coupon?.CouponCode ?? '').trim().toUpperCase();
+  const entry = {};
+  if (coupon.minCartAmount != null) entry.minCartAmount = Number(coupon.minCartAmount);
+  if (coupon.maxUsage != null) entry.maxUsage = Number(coupon.maxUsage);
+  if (coupon.description != null) entry.description = String(coupon.description);
+  if (id != null) couponExtras[String(id)] = { ...(couponExtras[String(id)] || {}), ...entry };
+  if (code) couponExtras[`_code_${code}`] = { ...(couponExtras[`_code_${code}`] || {}), ...entry };
+  saveJson(COUPON_EXTRAS_FILE, couponExtras);
+};
+
+const mergeExtras = (coupon) => {
+  if (!coupon) return coupon;
+  const extras = getCouponExtras(coupon);
+  if (!extras || Object.keys(extras).length === 0) return coupon;
+  return {
+    ...coupon,
+    minCartAmount: coupon.minCartAmount ?? extras.minCartAmount ?? 0,
+    maxUsage: coupon.maxUsage ?? extras.maxUsage ?? 0,
+    description: coupon.description ?? extras.description ?? '',
+  };
+};
+
 const products = [
   {
     id: 1,
@@ -73,31 +108,6 @@ const products = [
   },
 ];
 
-const coupons = [
-  {
-    id: 1,
-    code: "SHOP10",
-    discountType: "percentage",
-    discountValue: 10,
-    description: "Save 10% on your next order.",
-    minCartAmount: 0,
-    expiryDate: null,
-    usageCount: 0,
-    isActive: true,
-  },
-  {
-    id: 2,
-    code: "RARE50",
-    discountType: "fixed",
-    discountValue: 50,
-    description: "Take ₹50 off premium items.",
-    minCartAmount: 500,
-    expiryDate: null,
-    usageCount: 0,
-    isActive: true,
-  },
-];
-
 const broadcasts = loadJson(BROADCASTS_FILE, [
   {
     id: 1,
@@ -126,31 +136,6 @@ app.get('/api/products/:id', (req, res) => {
 const getBearerToken = (req) => {
   const auth = req.headers.authorization || '';
   return auth.startsWith('Bearer ') ? auth.slice(7) : '';
-};
-
-// Coupon extras store: fields not supported by .NET API (minCartAmount, maxUsage, description, usageCount)
-let couponExtras = loadJson(COUPON_EXTRAS_FILE, {});
-const saveCouponExtras = () => saveJson(COUPON_EXTRAS_FILE, couponExtras);
-
-const getExtraFields = (id) => couponExtras[id] ?? {};
-const setExtraFields = (id, fields) => {
-  const clean = {};
-  for (const [k, v] of Object.entries(fields)) {
-    if (v !== undefined) clean[k] = v;
-  }
-  couponExtras[id] = { ...couponExtras[id], ...clean };
-  saveCouponExtras();
-};
-
-// Merge .NET API discount with local extras
-const mergeExtras = (d) => {
-  const id = d.id;
-  const extras = getExtraFields(id);
-  d.minCartAmount = extras.minCartAmount ?? d.minCartAmount ?? 0;
-  d.maxUsage = extras.maxUsage ?? d.maxUsage ?? 0;
-  d.usageCount = extras.usageCount ?? d.usageCount ?? 0;
-  d.description = extras.description ?? d.description ?? '';
-  return d;
 };
 
 // Helper: fetch with timeout
@@ -183,37 +168,84 @@ app.get('/api/coupons', async (req, res) => {
   }
 });
 
-app.post('/api/coupons/validate', (req, res) => {
+app.post('/api/coupons/validate', async (req, res) => {
   const { code, amount } = req.body || {};
-  if (!code) {
-    return res.status(400).json({ message: 'Coupon code is required' });
-  }
+  if (!code) return res.status(400).json({ message: 'Coupon code is required' });
 
   const normalizedCode = String(code).trim().toUpperCase();
-  const coupon = coupons.find((item) => item.code === normalizedCode);
-  if (!coupon || !coupon.isActive) {
-    return res.status(404).json({ message: 'Coupon not found or inactive' });
-  }
+  const token = getBearerToken(req);
 
-  if (coupon.expiryDate && new Date(coupon.expiryDate) < new Date()) {
-    return res.status(400).json({ message: 'Coupon has expired' });
-  }
+  try {
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Discounts`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+    });
 
-  if (coupon.minCartAmount && Number(amount) < coupon.minCartAmount) {
-    return res.status(400).json({ message: `You need a minimum cart amount of ₹${coupon.minCartAmount} to use this coupon.` });
-  }
+    if (!dotNetRes.ok) {
+      const body = await dotNetRes.json().catch(() => null);
+      return res.status(dotNetRes.status || 502).json(body || { message: 'Discount service returned an error' });
+    }
 
-  res.json(coupon);
+    const data = await dotNetRes.json();
+    const raw = Array.isArray(data) ? data : data?.$values ?? data?.data ?? data?.value ?? [];
+    const discounts = Array.isArray(raw) ? raw.map((d) => fromDotNetDiscount(d)) : [];
+    const coupon = discounts.find((item) => String(item.code || '').trim().toUpperCase() === normalizedCode);
+
+    if (!coupon || !coupon.isActive) {
+      return res.status(404).json({ message: 'Coupon not found or inactive' });
+    }
+    if (coupon.expiryDate && new Date(coupon.expiryDate) < new Date()) {
+      return res.status(400).json({ message: 'Coupon has expired' });
+    }
+    if (coupon.minCartAmount && Number(amount) < Number(coupon.minCartAmount)) {
+      return res.status(400).json({ message: `You need a minimum cart amount of ₹${coupon.minCartAmount} to use this coupon.` });
+    }
+
+    return res.json(mergeExtras(coupon));
+  } catch (err) {
+    console.error('[coupon validate] External API unreachable',  err?.message || err);
+    return res.status(502).json({ message: 'External coupon service unreachable' });
+  }
 });
 
-// Helper: convert camelCase discount to .NET API format
+// Helper: convert camelCase discount to .NET API format (both camelCase and PascalCase)
 const toDotNetDiscount = (body) => {
   const d = {};
-  if (body.code != null) d.couponCode = body.code;
-  if (body.discountType === 'percentage' && body.discountValue != null) d.discountPercent = Number(body.discountValue);
-  else if (body.discountValue != null) d.discountPercent = Number(body.discountValue);
-  if (body.expiryDate != null && body.expiryDate !== '') d.endDate = body.expiryDate;
-  if (body.isActive != null) d.isActive = body.isActive;
+  const P = (k, v) => { d[k] = v; d[k.charAt(0).toUpperCase() + k.slice(1)] = v; };
+
+  if (body.code != null) {
+    P('couponCode', String(body.code));
+  }
+
+  if (body.discountValue != null) {
+    const num = Number(body.discountValue) || 0;
+    if ((body.discountType || '').toLowerCase() === 'percentage') {
+      P('discountPercent', num);
+    } else {
+      P('discountValue', num);
+    }
+  }
+
+  if (body.minCartAmount != null) {
+    P('minCartAmount', Number(body.minCartAmount) || 0);
+  }
+
+  if (body.maxUsage != null) {
+    P('maxUsage', Number(body.maxUsage) || 0);
+  }
+
+  if (body.description != null) {
+    P('description', String(body.description));
+  }
+
+  if (body.expiryDate != null && body.expiryDate !== '') {
+    P('endDate', body.expiryDate);
+    P('expiryDate', body.expiryDate);
+  }
+
+  if (body.isActive != null) {
+    P('isActive', !!body.isActive);
+  }
+
   return d;
 };
 
@@ -235,35 +267,21 @@ const fromDotNetDiscount = (d) => ({
 app.post('/api/coupons', async (req, res) => {
   try {
     const token = getBearerToken(req);
-    const { minCartAmount, maxUsage, description, ...rest } = req.body;
-    const body = toDotNetDiscount(rest);
-    const dotNetBody = { dto: {}, ...body };
-    if (dotNetBody.endDate == null) delete dotNetBody.endDate;
+    const requestBody = req.body || {};
+    const body = toDotNetDiscount(requestBody);
+    // Create PascalCase DTO for .NET API
+    const pascalDto = {};
+    Object.keys(body).forEach((k) => { pascalDto[k.charAt(0).toUpperCase() + k.slice(1)] = body[k]; });
+    const dotNetBody = { dto: pascalDto, ...body, ...pascalDto };
+    if (dotNetBody.EndDate == null && dotNetBody.endDate == null) { delete dotNetBody.endDate; delete dotNetBody.EndDate; }
     const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Discounts`, {
       method: 'POST',
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
       body: JSON.stringify(dotNetBody),
     });
     if (!dotNetRes.ok) return res.status(dotNetRes.status).json({ message: 'Discount creation failed' });
-    // After successful creation, fetch list to get the discount ID
-    try {
-      const getRes = await fetchWithTimeout(`${EXTERNAL_API}/Discounts`, {
-        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
-      });
-      if (getRes.ok) {
-        const listData = await getRes.json();
-        const list = Array.isArray(listData) ? listData : listData?.$values ?? [];
-        const found = list.find(d => d.couponCode === body.couponCode);
-        if (found) {
-          const id = found.discountId ?? found.id ?? found.DiscountId;
-          setExtraFields(id, {
-            minCartAmount: Number(minCartAmount) || 0,
-            maxUsage: Number(maxUsage) || 0,
-            description: description || '',
-          });
-        }
-      }
-    } catch {}
+    // Persist extras to coupon-extras.json as backup
+    setCouponExtras(requestBody);
     return res.status(201).json({ message: 'Discount Created' });
   } catch (e) {
     res.status(502).json({ message: 'External API unreachable' });
@@ -277,14 +295,7 @@ app.put('/api/coupons/:id', async (req, res) => {
     const token = getBearerToken(req);
     const headers = { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' };
     const id = req.params.id;
-
-    // Save local extras (fields .NET API doesn't support)
-    const { minCartAmount, maxUsage, description, ...rest } = req.body;
-    setExtraFields(id, {
-      minCartAmount: minCartAmount != null ? Number(minCartAmount) : undefined,
-      maxUsage: maxUsage != null ? Number(maxUsage) : undefined,
-      description: description != null ? description : undefined,
-    });
+    const requestBody = req.body || {};
 
     // 1. Fetch existing discount from .NET API
     const getRes = await fetchWithTimeout(`${EXTERNAL_API}/Discounts/${id}`, { headers });
@@ -295,23 +306,27 @@ app.put('/api/coupons/:id', async (req, res) => {
     const existing = await getRes.json();
 
     // 2. Merge incoming changes into existing fields
-    const changes = toDotNetDiscount(rest);
-    const merged = { ...existing, ...changes };
+    const changes = toDotNetDiscount(requestBody);
+    const pascalChanges = {};
+    Object.keys(changes).forEach((k) => { pascalChanges[k.charAt(0).toUpperCase() + k.slice(1)] = changes[k]; });
+    const merged = { ...existing, ...changes, ...pascalChanges };
     if (merged.discountId == null) merged.discountId = Number(id);
 
     // 3. PUT full merged object
     const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Discounts/${id}`, {
       method: 'PUT',
       headers,
-      body: JSON.stringify({ dto: {}, ...merged }),
+      body: JSON.stringify({ dto: merged, ...merged }),
     });
     const text = await dotNetRes.text();
+    // Persist extras to coupon-extras.json as backup
+    setCouponExtras({ ...merged, ...requestBody });
     try {
       const data = JSON.parse(text);
-      if (dotNetRes.ok) return res.json(mergeExtras(fromDotNetDiscount(data)));
+      if (dotNetRes.ok) return res.json(fromDotNetDiscount(data));
       return res.status(dotNetRes.status).json(data);
     } catch {
-      if (dotNetRes.ok) return res.json(mergeExtras(fromDotNetDiscount(merged)));
+      if (dotNetRes.ok) return res.json(fromDotNetDiscount(merged));
       return res.status(dotNetRes.status).json({ message: text });
     }
   } catch (e) {
@@ -1161,7 +1176,40 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(process.cwd(), 'dist', 'index.html'));
 });
 
+// Migrate existing coupon extras from coupon-extras.json to .NET API database
+const migrateCouponExtras = async () => {
+  const ids = Object.keys(couponExtras).filter(k => !k.startsWith('_code_'));
+  if (ids.length === 0) return;
+  console.log(`[coupon-extras] Migrating ${ids.length} coupon extras to database...`);
+  for (const id of ids) {
+    try {
+      const res = await fetch(`${EXTERNAL_API}/Discounts/${id}`, {
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) continue;
+      const existing = await res.json();
+      const extras = couponExtras[id];
+      const updateBody = {
+        ...existing,
+        ...(extras.minCartAmount != null ? { minCartAmount: extras.minCartAmount, MinCartAmount: extras.minCartAmount } : {}),
+        ...(extras.maxUsage != null ? { maxUsage: extras.maxUsage, MaxUsage: extras.maxUsage } : {}),
+        ...(extras.description != null ? { description: extras.description, Description: extras.description } : {}),
+      };
+      await fetch(`${EXTERNAL_API}/Discounts/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dto: updateBody, ...updateBody }),
+      });
+    } catch (e) {
+      console.error(`[coupon-extras] Migration failed for coupon ${id}:`, e?.message);
+    }
+  }
+  console.log('[coupon-extras] Migration complete.');
+};
+
 app.listen(PORT, () => {
   console.log(`🚀 Project started! Open http://localhost:${PORT} to view it.`);
   console.log(`   .NET API target: ${EXTERNAL_API}`);
+  // Migrate old coupon extras to database in background (non-blocking)
+  migrateCouponExtras();
 });
