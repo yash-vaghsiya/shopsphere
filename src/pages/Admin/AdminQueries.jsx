@@ -103,10 +103,19 @@ export const AdminQueries = () => {
 
     setSubmittingReply(true);
     try {
-      const res = await apiFetch(`/${item.id}/reply`, {
-        method: "POST",
+      const res = await apiFetch(`/${item.id}`, {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reply: replyText.trim() }),
+        body: JSON.stringify({
+          Id: item.id,
+          Name: item.name,
+          Email: item.email,
+          Subject: item.subject,
+          Message: item.message,
+          Reply: replyText.trim(),
+          Status: "Replied",
+          RepliedAt: new Date().toISOString(),
+        }),
       });
       if (!res.ok) throw new Error("Reply failed");
       const data = await res.json();

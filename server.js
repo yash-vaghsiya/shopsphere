@@ -870,8 +870,6 @@ app.delete('/api/products/:id', (req, res) => {
 // Newsletter subscribers (in-memory)
 const subscribers = [];
 
-// Contact queries (in-memory)
-const contactQueries = [];
 
 // In-memory user store for mock auth fallback (loaded from disk)
 const users = loadJson(USERS_FILE, []);
@@ -1115,54 +1113,7 @@ app.delete('/api/newsletter/subscribers/:id', (req, res) => {
   res.json({ message: 'Subscriber removed' });
 });
 
-// Contact queries endpoints
-app.post('/api/contact/queries', (req, res) => {
-  const { name, email, message } = req.body || {};
-  if (!name || !email || !message) {
-    return res.status(400).json({ message: 'Name, email, and message are required' });
-  }
-  const query = {
-    id: Date.now(),
-    name,
-    email,
-    message,
-    reply: null,
-    status: 'pending',
-    createdAt: new Date().toISOString(),
-  };
-  contactQueries.unshift(query);
-  res.status(201).json({ message: 'Message dispatched successfully! We\'ll reply within 24 hours.', query });
-});
-
-app.get('/api/contact/queries', (req, res) => {
-  res.json(contactQueries);
-});
-
-app.delete('/api/contact/queries/:id', (req, res) => {
-  const id = Number(req.params.id);
-  const index = contactQueries.findIndex(q => q.id === id);
-  if (index === -1) {
-    return res.status(404).json({ message: 'Query not found' });
-  }
-  contactQueries.splice(index, 1);
-  res.json({ message: 'Query removed' });
-});
-
-app.post('/api/contact/queries/:id/reply', (req, res) => {
-  const id = Number(req.params.id);
-  const query = contactQueries.find(q => q.id === id);
-  if (!query) {
-    return res.status(404).json({ message: 'Query not found' });
-  }
-  const { reply } = req.body || {};
-  if (!reply) {
-    return res.status(400).json({ message: 'Reply text is required' });
-  }
-  query.reply = reply;
-  query.status = 'replied';
-  query.repliedAt = new Date().toISOString();
-  res.json({ query });
-});
+// Contact queries are handled client-side directly against the .NET API (https://localhost:7015/api/ContactQueries)
 
 // Users endpoint (admin customers)
 app.get('/api/users', async (req, res) => {
