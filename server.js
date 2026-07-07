@@ -236,8 +236,14 @@ const toDotNetBroadcast = (body) => {
   return d;
 };
 
+const contentHash = (s) => {
+  let h = 0;
+  for (let i = 0; i < (s || '').length; i++) { h = ((h << 5) - h) + s.charCodeAt(i); h |= 0; }
+  return Math.abs(h);
+};
+
 const fromDotNetBroadcast = (d) => ({
-  id: d.id ?? d.Id,
+  id: d.id ?? d.Id ?? contentHash((d.title ?? d.Title ?? '') + (d.message ?? d.Message ?? '') + (d.createdAt ?? d.CreatedAt ?? '')),
   title: d.title ?? d.Title ?? '',
   message: d.message ?? d.Message ?? '',
   type: d.type ?? d.Type ?? 'info',

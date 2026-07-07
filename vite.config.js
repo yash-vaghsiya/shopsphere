@@ -5,7 +5,19 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), {
+      name: 'favicon-redirect',
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          if (req.url === '/favicon.ico') {
+            res.writeHead(301, { Location: '/favicon.svg' });
+            res.end();
+            return;
+          }
+          next();
+        });
+      },
+    }],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

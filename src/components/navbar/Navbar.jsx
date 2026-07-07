@@ -92,9 +92,19 @@ export const Navbar = () => {
         if (Array.isArray(data)) all = data;
       }
 
+      // Ensure every broadcast has a valid id (prevent React key warnings)
+      const ensureId = (b) => {
+        if (b.id == null) {
+          let h = 0; const s = (b.title ?? b.Title ?? '') + (b.message ?? b.Message ?? '') + (b.createdAt ?? b.CreatedAt ?? '');
+          for (let i = 0; i < s.length; i++) { h = ((h << 5) - h) + s.charCodeAt(i); h |= 0; }
+          return { ...b, id: Math.abs(h) };
+        }
+        return b;
+      };
+
       const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
       const now = Date.now();
-      const recent = all.filter((b) => now - new Date(b.createdAt).getTime() <= TWENTY_FOUR_HOURS);
+      const recent = all.map(ensureId).filter((b) => now - new Date(b.createdAt).getTime() <= TWENTY_FOUR_HOURS);
       setBroadcasts(recent);
 
       const seenIds = getSeenIds();
