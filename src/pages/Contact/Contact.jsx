@@ -4,7 +4,17 @@ import { Button } from "../../components/common/Button";
 import { Input } from "../../components/common/Input";
 import { Mail, Phone, MapPin, Send, MessageSquare } from "lucide-react";
 import { toast } from "react-hot-toast";
-import { axiosInstance } from "../../services/api";
+
+const CONTACT_API = "https://localhost:7015/api/ContactQueries";
+
+const getAuthHeaders = () => {
+  const headers = { "Content-Type": "application/json" };
+  try {
+    const token = localStorage.getItem("token");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  } catch {}
+  return headers;
+};
 
 export const Contact = () => {
   const [name, setName] = useState("");
@@ -22,20 +32,25 @@ export const Contact = () => {
 
     setLoading(true);
     try {
-      const response = await axiosInstance.post("/api/contact/queries", {
-        name,
-        email,
-        subject,
-        message: msg,
+      const res = await fetch(CONTACT_API, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ Name: name.trim(), Email: email.trim(), Subject: subject.trim(), Message: msg.trim() }),
       });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.message || errData.Message || `Server returned ${res.status}`);
+      }
+
       setName("");
       setEmail("");
       setSubject("");
       setMsg("");
-      toast.success(response.data.message || "Message dispatched successfully! We'll reply within 24 hours.");
+      toast.success("Message dispatched successfully! We'll reply within 24 hours.");
     } catch (err) {
       console.error(err);
-      toast.error(err.response?.data?.message || "Failed to submit query. Please try again.");
+      toast.error(err.message || "Failed to submit query. Please try again.");
     } finally {
       setLoading(false);
     }
