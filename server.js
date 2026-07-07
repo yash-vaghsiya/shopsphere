@@ -13,7 +13,6 @@ const DATA_DIR = path.resolve('data');
 const BROADCASTS_FILE = path.join(DATA_DIR, 'broadcasts.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const CATEGORIES_FILE = path.join(DATA_DIR, 'categories.json');
-const COUPON_EXTRAS_FILE = path.join(DATA_DIR, 'coupon-extras.json');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const loadJson = (file, fallback) => {
@@ -32,41 +31,6 @@ const getUserFromHeader = (req) => {
   const userId = req.headers["x-user-id"] || req.headers["X-User-Id"] || null;
   const orderToken = req.headers["x-order-token"] || req.headers["X-Order-Token"] || null;
   return { email, role, userId, orderToken };
-};
-
-// Coupon extras store — merges into .NET API responses for fields the API may not persist
-const couponExtras = loadJson(COUPON_EXTRAS_FILE, {});
-
-const getCouponExtras = (coupon) => {
-  const id = coupon?.id ?? coupon?.discountId ?? coupon?.DiscountId;
-  const code = (coupon?.code ?? coupon?.couponCode ?? coupon?.Code ?? coupon?.CouponCode ?? '').trim().toUpperCase();
-  const byId = id != null ? couponExtras[String(id)] : null;
-  const byCode = code ? couponExtras[`_code_${code}`] : null;
-  return { ...(byCode || {}), ...(byId || {}) };
-};
-
-const setCouponExtras = (coupon) => {
-  const id = coupon?.id ?? coupon?.discountId ?? coupon?.DiscountId;
-  const code = (coupon?.code ?? coupon?.couponCode ?? coupon?.Code ?? coupon?.CouponCode ?? '').trim().toUpperCase();
-  const entry = {};
-  if (coupon.minCartAmount != null) entry.minCartAmount = Number(coupon.minCartAmount);
-  if (coupon.maxUsage != null) entry.maxUsage = Number(coupon.maxUsage);
-  if (coupon.description != null) entry.description = String(coupon.description);
-  if (id != null) couponExtras[String(id)] = { ...(couponExtras[String(id)] || {}), ...entry };
-  if (code) couponExtras[`_code_${code}`] = { ...(couponExtras[`_code_${code}`] || {}), ...entry };
-  saveJson(COUPON_EXTRAS_FILE, couponExtras);
-};
-
-const mergeExtras = (coupon) => {
-  if (!coupon) return coupon;
-  const extras = getCouponExtras(coupon);
-  if (!extras || Object.keys(extras).length === 0) return coupon;
-  return {
-    ...coupon,
-    minCartAmount: coupon.minCartAmount ?? extras.minCartAmount ?? 0,
-    maxUsage: coupon.maxUsage ?? extras.maxUsage ?? 0,
-    description: coupon.description ?? extras.description ?? '',
-  };
 };
 
 const products = [
@@ -160,7 +124,7 @@ app.get('/api/coupons', async (req, res) => {
     if (dotNetRes.ok) {
       const data = await dotNetRes.json();
       const raw = Array.isArray(data) ? data : data?.$values ?? data?.data ?? data?.value ?? [];
-      return res.json(raw.map(d => mergeExtras(fromDotNetDiscount(d))));
+      return res.json(raw.map(d => fromDotNetDiscount(d)));
     }
     res.status(dotNetRes.status).json(await dotNetRes.json().catch(() => ({ message: 'Proxy error' })));
   } catch {
@@ -200,7 +164,7 @@ app.post('/api/coupons/validate', async (req, res) => {
       return res.status(400).json({ message: `You need a minimum cart amount of ₹${coupon.minCartAmount} to use this coupon.` });
     }
 
-    return res.json(mergeExtras(coupon));
+    return res.json(coupon);
   } catch (err) {
     console.error('[coupon validate] External API unreachable',  err?.message || err);
     return res.status(502).json({ message: 'External coupon service unreachable' });
@@ -263,6 +227,23 @@ const fromDotNetDiscount = (d) => ({
   maxUsage: d.maxUsage ?? d.MaxUsage ?? 0,
 });
 
+// ── Broadcast helpers ───────────────────────────────────────────────────
+const toDotNetBroadcast = (body) => {
+  const d = {};
+  if (body.title != null) { d.title = String(body.title); d.Title = String(body.title); }
+  if (body.message != null) { d.message = String(body.message); d.Message = String(body.message); }
+  if (body.type != null) { d.type = String(body.type); d.Type = String(body.type); }
+  return d;
+};
+
+const fromDotNetBroadcast = (d) => ({
+  id: d.id ?? d.Id,
+  title: d.title ?? d.Title ?? '',
+  message: d.message ?? d.Message ?? '',
+  type: d.type ?? d.Type ?? 'info',
+  createdAt: d.createdAt ?? d.CreatedAt ?? d.createdAt ?? new Date().toISOString(),
+});
+
 // Proxy: POST /api/coupons → .NET API POST /Discounts
 app.post('/api/coupons', async (req, res) => {
   try {
@@ -280,8 +261,6 @@ app.post('/api/coupons', async (req, res) => {
       body: JSON.stringify(dotNetBody),
     });
     if (!dotNetRes.ok) return res.status(dotNetRes.status).json({ message: 'Discount creation failed' });
-    // Persist extras to coupon-extras.json as backup
-    setCouponExtras(requestBody);
     return res.status(201).json({ message: 'Discount Created' });
   } catch (e) {
     res.status(502).json({ message: 'External API unreachable' });
@@ -319,8 +298,6 @@ app.put('/api/coupons/:id', async (req, res) => {
       body: JSON.stringify({ dto: merged, ...merged }),
     });
     const text = await dotNetRes.text();
-    // Persist extras to coupon-extras.json as backup
-    setCouponExtras({ ...merged, ...requestBody });
     try {
       const data = JSON.parse(text);
       if (dotNetRes.ok) return res.json(fromDotNetDiscount(data));
@@ -349,54 +326,162 @@ app.delete('/api/coupons/:id', async (req, res) => {
   }
 });
 
-app.get('/api/broadcasts', (req, res) => {
-  try {
-    const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
-    const now = Date.now();
-    for (let i = broadcasts.length - 1; i >= 0; i--) {
-      const age = now - new Date(broadcasts[i].createdAt).getTime();
-      if (age > TWENTY_FOUR_HOURS) {
-        broadcasts.splice(i, 1);
-      }
-    }
-    saveJson(BROADCASTS_FILE, broadcasts);
-    res.json(broadcasts);
-  } catch (err) {
-    console.error('[broadcasts] Error:', err);
-    res.status(500).json({ message: 'Internal server error' });
+// ── Broadcast endpoints (SQL Database via .NET API, local JSON as read cache) ──
+
+const BROADCAST_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+// ── Broadcast SSE (Server-Sent Events) for real-time push ──────────────
+const broadcastSSEClients = new Set();
+
+const sendBroadcastSSE = (event, data) => {
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const client of broadcastSSEClients) {
+    try { client.write(payload); } catch { broadcastSSEClients.delete(client); }
   }
+};
+
+const expireBroadcasts = () => {
+  const now = Date.now();
+  for (let i = broadcasts.length - 1; i >= 0; i--) {
+    if (now - new Date(broadcasts[i].createdAt).getTime() > BROADCAST_TTL) broadcasts.splice(i, 1);
+  }
+};
+
+// SSE endpoint for real-time broadcast push
+app.get('/api/broadcasts/stream', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.write(`event: connected\ndata: {}\n\n`);
+
+  // Send the current broadcasts on connect
+  expireBroadcasts();
+  res.write(`event: broadcasts\ndata: ${JSON.stringify(broadcasts)}\n\n`);
+
+  broadcastSSEClients.add(res);
+  req.on('close', () => { broadcastSSEClients.delete(res); });
 });
 
-app.post('/api/broadcasts', (req, res) => {
+app.get('/api/broadcasts', async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Broadcasts`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+    }, 2000);
+    if (dotNetRes.ok) {
+      const data = await dotNetRes.json();
+      const raw = Array.isArray(data) ? data : data?.$values ?? data?.data ?? data?.value ?? [];
+      const mapped = (Array.isArray(raw) ? raw : []).map(d => fromDotNetBroadcast(d));
+      // Sync local cache with SQL database data
+      broadcasts.length = 0; broadcasts.push(...mapped);
+      expireBroadcasts();
+      saveJson(BROADCASTS_FILE, broadcasts);
+      return res.json(broadcasts);
+    }
+  } catch {}
+
+  // Fallback to local cache if .NET API unreachable
+  expireBroadcasts();
+  saveJson(BROADCASTS_FILE, broadcasts);
+  return res.json(broadcasts);
+});
+
+app.post('/api/broadcasts', async (req, res) => {
   const { title, message, type } = req.body || {};
   if (!title || !message) {
     return res.status(400).json({ message: 'Broadcast title and message are required.' });
   }
 
-  const id = Date.now();
-  const newBroadcast = {
-    id,
-    title,
-    message,
-    type: type || 'info',
-    createdAt: new Date().toISOString(),
-  };
+  try {
+    const token = getBearerToken(req);
+    const broadcastBody = toDotNetBroadcast({ title: String(title).trim(), message: String(message).trim(), type: type || 'info' });
+    const pascalDto = {};
+    Object.keys(broadcastBody).forEach((k) => { pascalDto[k.charAt(0).toUpperCase() + k.slice(1)] = broadcastBody[k]; });
+    const dotNetBody = { dto: pascalDto, ...broadcastBody, ...pascalDto };
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Broadcasts`, {
+      method: 'POST',
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+      body: JSON.stringify(dotNetBody),
+    });
+    if (dotNetRes.ok) {
+      const data = await dotNetRes.json();
+      const created = fromDotNetBroadcast(data?.data ?? data?.value ?? data ?? {});
+      // Sync local cache
+      broadcasts.unshift(created);
+      expireBroadcasts();
+      saveJson(BROADCASTS_FILE, broadcasts);
+      // Push to all connected SSE clients
+      sendBroadcastSSE('broadcast-created', created);
+      return res.status(201).json(created);
+    }
+  } catch {}
 
+  // Fallback to local cache if .NET API unreachable
+  const id = Date.now();
+  const newBroadcast = { id, title: String(title).trim(), message: String(message).trim(), type: type || 'info', createdAt: new Date().toISOString() };
   broadcasts.unshift(newBroadcast);
   saveJson(BROADCASTS_FILE, broadcasts);
+  // Push to all connected SSE clients
+  sendBroadcastSSE('broadcast-created', newBroadcast);
   res.status(201).json(newBroadcast);
 });
 
-app.delete('/api/broadcasts/:id', (req, res) => {
-  const broadcastId = String(req.params.id);
+app.delete('/api/broadcasts/:id', async (req, res) => {
+  const broadcastId = req.params.id;
+
+  try {
+    const token = getBearerToken(req);
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Broadcasts/${broadcastId}`, {
+      method: 'DELETE',
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+    });
+    if (dotNetRes.ok || dotNetRes.status === 404) {
+      // Remove from local cache
+      const idx = broadcasts.findIndex((item) => String(item.id) === broadcastId);
+      if (idx >= 0) broadcasts.splice(idx, 1);
+      saveJson(BROADCASTS_FILE, broadcasts);
+      // Push to all connected SSE clients
+      sendBroadcastSSE('broadcast-deleted', { id: broadcastId });
+      return res.json({ message: 'Broadcast removed successfully' });
+    }
+  } catch {}
+
+  // Fallback to local removal
   const index = broadcasts.findIndex((item) => String(item.id) === broadcastId);
-  if (index === -1) {
-    return res.status(404).json({ message: 'Broadcast not found' });
-  }
+  if (index === -1) return res.status(404).json({ message: 'Broadcast not found' });
   broadcasts.splice(index, 1);
   saveJson(BROADCASTS_FILE, broadcasts);
+  // Push to all connected SSE clients
+  sendBroadcastSSE('broadcast-deleted', { id: broadcastId });
   res.json({ message: 'Broadcast removed successfully' });
 });
+
+// ── Background broadcast sync from .NET API ──────────────────────────
+const syncBroadcastsFromDotNet = async () => {
+  try {
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Broadcasts`, {
+      headers: { 'Content-Type': 'application/json' },
+    }, 8000);
+    if (dotNetRes.ok) {
+      const data = await dotNetRes.json();
+      const raw = Array.isArray(data) ? data : data?.$values ?? data?.data ?? data?.value ?? [];
+      const mapped = (Array.isArray(raw) ? raw : []).map(d => fromDotNetBroadcast(d));
+      const before = JSON.stringify(broadcasts);
+      broadcasts.length = 0; broadcasts.push(...mapped);
+      expireBroadcasts();
+      saveJson(BROADCASTS_FILE, broadcasts);
+      // Only emit SSE event if broadcasts actually changed
+      if (JSON.stringify(broadcasts) !== before) {
+        sendBroadcastSSE('broadcasts', broadcasts);
+      }
+    }
+  } catch {}
+};
+// Sync every 60 seconds
+setInterval(syncBroadcastsFromDotNet, 60000);
 
 app.post('/api/products', (req, res) => {
   const product = req.body;
@@ -1176,40 +1261,7 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(process.cwd(), 'dist', 'index.html'));
 });
 
-// Migrate existing coupon extras from coupon-extras.json to .NET API database
-const migrateCouponExtras = async () => {
-  const ids = Object.keys(couponExtras).filter(k => !k.startsWith('_code_'));
-  if (ids.length === 0) return;
-  console.log(`[coupon-extras] Migrating ${ids.length} coupon extras to database...`);
-  for (const id of ids) {
-    try {
-      const res = await fetch(`${EXTERNAL_API}/Discounts/${id}`, {
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (!res.ok) continue;
-      const existing = await res.json();
-      const extras = couponExtras[id];
-      const updateBody = {
-        ...existing,
-        ...(extras.minCartAmount != null ? { minCartAmount: extras.minCartAmount, MinCartAmount: extras.minCartAmount } : {}),
-        ...(extras.maxUsage != null ? { maxUsage: extras.maxUsage, MaxUsage: extras.maxUsage } : {}),
-        ...(extras.description != null ? { description: extras.description, Description: extras.description } : {}),
-      };
-      await fetch(`${EXTERNAL_API}/Discounts/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dto: updateBody, ...updateBody }),
-      });
-    } catch (e) {
-      console.error(`[coupon-extras] Migration failed for coupon ${id}:`, e?.message);
-    }
-  }
-  console.log('[coupon-extras] Migration complete.');
-};
-
 app.listen(PORT, () => {
   console.log(`🚀 Project started! Open http://localhost:${PORT} to view it.`);
   console.log(`   .NET API target: ${EXTERNAL_API}`);
-  // Migrate old coupon extras to database in background (non-blocking)
-  migrateCouponExtras();
 });
