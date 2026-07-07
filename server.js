@@ -1127,6 +1127,7 @@ app.post('/api/contact/queries', (req, res) => {
     email,
     message,
     reply: null,
+    status: 'pending',
     createdAt: new Date().toISOString(),
   };
   contactQueries.unshift(query);
@@ -1158,6 +1159,8 @@ app.post('/api/contact/queries/:id/reply', (req, res) => {
     return res.status(400).json({ message: 'Reply text is required' });
   }
   query.reply = reply;
+  query.status = 'replied';
+  query.repliedAt = new Date().toISOString();
   res.json({ query });
 });
 

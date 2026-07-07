@@ -1,8 +1,50 @@
 import React, { useEffect, useState } from "react";
-import { MessageSquare, Search, Trash2, Mail, CheckCircle2, AlertCircle, Send, CornerDownRight, X, Clock, Eye } from "lucide-react";
-import { axiosInstance } from "../../services/api";
+import { MessageSquare, Search, Trash2, Mail, CheckCircle2, AlertCircle, Send, CornerDownRight, X, Clock } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { formatDate } from "../../utils/format";
+
+const QUERIES_API = "https://localhost:7015/api/ContactQueries";
+
+const getAuthHeaders = () => {
+  const headers = { "Content-Type": "application/json" };
+  try {
+    const token = localStorage.getItem("token");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  } catch {}
+  return headers;
+};
+
+const unwrapArray = (data) => {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === "object") {
+    if (Array.isArray(data.$values)) return data.$values;
+    if (Array.isArray(data.value)) return data.value;
+    if (Array.isArray(data.data)) return data.data;
+    if (Array.isArray(data.items)) return data.items;
+    if (Array.isArray(data.records)) return data.records;
+    if (Array.isArray(data.result)) return data.result;
+    if (Array.isArray(data.results)) return data.results;
+  }
+  return null;
+};
+
+const normalizeQuery = (d) => ({
+  id: d.id ?? d.Id ?? d.queryId ?? d.QueryId,
+  name: d.name ?? d.Name ?? '',
+  email: d.email ?? d.Email ?? '',
+  subject: d.subject ?? d.Subject ?? '',
+  message: d.message ?? d.Message ?? '',
+  reply: d.reply ?? d.Reply ?? null,
+  status: d.status ?? d.Status ?? 'pending',
+  createdAt: d.createdAt ?? d.CreatedAt ?? new Date().toISOString(),
+  repliedAt: d.repliedAt ?? d.RepliedAt ?? null,
+});
+
+const apiFetch = async (path, options = {}) =>
+  fetch(`${QUERIES_API}${path}`, {
+    ...options,
+    headers: { ...getAuthHeaders(), ...options.headers },
+  });
 
 export const AdminQueries = () => {
   const [queries, setQueries] = useState([]);
@@ -10,7 +52,6 @@ export const AdminQueries = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState('all');
   
-  // State for composing replies
   const [replyingToId, setReplyingToId] = useState(null);
   const [replyText, setReplyText] = useState("");
   const [submittingReply, setSubmittingReply] = useState(false);
@@ -18,10 +59,13 @@ export const AdminQueries = () => {
 
   const fetchQueries = async () => {
     try {
-      const response = await axiosInstance.get("/api/contact/queries");
-      setQueries(Array.isArray(response.data) ? response.data : []);
-    } catch (err) {
-      toast.error(err.response?.data?.message || "Failed to load user queries.");
+      const res = await apiFetch("");
+      if (!res.ok) throw new Error("Failed to fetch");
+      const data = await res.json();
+      const raw = unwrapArray(data);
+      setQueries(raw ? raw.map(normalizeQuery) : []);
+    } catch {
+      toast.error("Failed to load user queries.");
     } finally {
       setLoading(false);
     }
@@ -37,15 +81,16 @@ export const AdminQueries = () => {
     }
 
     try {
-      await axiosInstance.delete(`/api/contact/queries/${id}`);
+      const res = await apiFetch(`/${id}`, { method: "DELETE" });
+      if (!res.ok && res.status !== 404) throw new Error("Delete failed");
       toast.success(`Query from ${name} successfully deleted.`);
       setQueries((prev) => prev.filter((q) => q.id !== id));
       if (replyingToId === id) {
         setReplyingToId(null);
         setReplyText("");
       }
-    } catch (err) {
-      toast.error(err.response?.data?.message || "Failed to delete query.");
+    } catch {
+      toast.error("Failed to delete query.");
     }
   };
 
@@ -58,14 +103,16 @@ export const AdminQueries = () => {
 
     setSubmittingReply(true);
     try {
-      const response = await axiosInstance.post(`/api/contact/queries/${item.id}/reply`, {
-        reply: replyText.trim()
+      const res = await apiFetch(`/${item.id}/reply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reply: replyText.trim() }),
       });
-      
-      const updatedQuery = response.data.query;
+      if (!res.ok) throw new Error("Reply failed");
+      const data = await res.json();
+      const updatedQuery = normalizeQuery(data?.query ?? data?.data ?? data ?? {});
       setQueries((prev) => prev.map((q) => q.id === item.id ? updatedQuery : q));
-      
-      // Store simulation info to render a beautiful sent email preview for the admin
+
       setLastEmailSent({
         to: item.email,
         name: item.name,
@@ -73,12 +120,12 @@ export const AdminQueries = () => {
         body: replyText.trim()
       });
 
-      toast.success("Reply successfully saved and simulated in email dispatcher!");
+      toast.success("Reply successfully saved!");
       
       setReplyingToId(null);
       setReplyText("");
-    } catch (err) {
-      toast.error(err.response?.data?.message || "Failed to submit reply.");
+    } catch {
+      toast.error("Failed to submit reply.");
     } finally {
       setSubmittingReply(false);
     }
