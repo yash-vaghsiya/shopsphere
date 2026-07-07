@@ -10,7 +10,7 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
 const DATA_DIR = path.resolve('data');
-const BROADCASTS_FILE = path.join(DATA_DIR, 'broadcasts.json');
+
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const CATEGORIES_FILE = path.join(DATA_DIR, 'categories.json');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -72,15 +72,6 @@ const products = [
   },
 ];
 
-const broadcasts = loadJson(BROADCASTS_FILE, [
-  {
-    id: 1,
-    title: "Weekend Flash Sale",
-    message: "ShopSphere is offering up to 25% off select luxury goods this weekend only!",
-    type: "offer",
-    createdAt: new Date().toISOString(),
-  },
-]);
 
 const orders = []; // in-memory only for backward-compatible order viewing; no JSON persistence
 
@@ -332,11 +323,8 @@ app.delete('/api/coupons/:id', async (req, res) => {
   }
 });
 
-// ── Broadcast endpoints (SQL Database via .NET API, local JSON as read cache) ──
+// ── Broadcast endpoints (thin proxy to .NET API + SSE push) ──────────
 
-const BROADCAST_TTL = 24 * 60 * 60 * 1000; // 24 hours
-
-// ── Broadcast SSE (Server-Sent Events) for real-time push ──────────────
 const broadcastSSEClients = new Set();
 
 const sendBroadcastSSE = (event, data) => {
@@ -346,15 +334,8 @@ const sendBroadcastSSE = (event, data) => {
   }
 };
 
-const expireBroadcasts = () => {
-  const now = Date.now();
-  for (let i = broadcasts.length - 1; i >= 0; i--) {
-    if (now - new Date(broadcasts[i].createdAt).getTime() > BROADCAST_TTL) broadcasts.splice(i, 1);
-  }
-};
-
 // SSE endpoint for real-time broadcast push
-app.get('/api/broadcasts/stream', (req, res) => {
+app.get('/api/broadcasts/stream', async (req, res) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -363,9 +344,17 @@ app.get('/api/broadcasts/stream', (req, res) => {
   });
   res.write(`event: connected\ndata: {}\n\n`);
 
-  // Send the current broadcasts on connect
-  expireBroadcasts();
-  res.write(`event: broadcasts\ndata: ${JSON.stringify(broadcasts)}\n\n`);
+  try {
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Broadcasts`, {
+      headers: { 'Content-Type': 'application/json' },
+    }, 5000);
+    if (dotNetRes.ok) {
+      const data = await dotNetRes.json();
+      const raw = Array.isArray(data) ? data : data?.$values ?? data?.data ?? data?.value ?? [];
+      const mapped = (Array.isArray(raw) ? raw : []).map(d => fromDotNetBroadcast(d));
+      res.write(`event: broadcasts\ndata: ${JSON.stringify(mapped)}\n\n`);
+    }
+  } catch {}
 
   broadcastSSEClients.add(res);
   req.on('close', () => { broadcastSSEClients.delete(res); });
@@ -376,23 +365,17 @@ app.get('/api/broadcasts', async (req, res) => {
     const token = getBearerToken(req);
     const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Broadcasts`, {
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
-    }, 2000);
+    }, 5000);
     if (dotNetRes.ok) {
       const data = await dotNetRes.json();
       const raw = Array.isArray(data) ? data : data?.$values ?? data?.data ?? data?.value ?? [];
       const mapped = (Array.isArray(raw) ? raw : []).map(d => fromDotNetBroadcast(d));
-      // Sync local cache with SQL database data
-      broadcasts.length = 0; broadcasts.push(...mapped);
-      expireBroadcasts();
-      saveJson(BROADCASTS_FILE, broadcasts);
-      return res.json(broadcasts);
+      return res.json(mapped);
     }
-  } catch {}
-
-  // Fallback to local cache if .NET API unreachable
-  expireBroadcasts();
-  saveJson(BROADCASTS_FILE, broadcasts);
-  return res.json(broadcasts);
+    return res.status(dotNetRes.status).json({ message: 'Failed to fetch broadcasts' });
+  } catch {
+    res.status(502).json({ message: 'Broadcast service unreachable' });
+  }
 });
 
 app.post('/api/broadcasts', async (req, res) => {
@@ -415,24 +398,14 @@ app.post('/api/broadcasts', async (req, res) => {
     if (dotNetRes.ok) {
       const data = await dotNetRes.json();
       const created = fromDotNetBroadcast(data?.data ?? data?.value ?? data ?? {});
-      // Sync local cache
-      broadcasts.unshift(created);
-      expireBroadcasts();
-      saveJson(BROADCASTS_FILE, broadcasts);
-      // Push to all connected SSE clients
       sendBroadcastSSE('broadcast-created', created);
       return res.status(201).json(created);
     }
-  } catch {}
-
-  // Fallback to local cache if .NET API unreachable
-  const id = Date.now();
-  const newBroadcast = { id, title: String(title).trim(), message: String(message).trim(), type: type || 'info', createdAt: new Date().toISOString() };
-  broadcasts.unshift(newBroadcast);
-  saveJson(BROADCASTS_FILE, broadcasts);
-  // Push to all connected SSE clients
-  sendBroadcastSSE('broadcast-created', newBroadcast);
-  res.status(201).json(newBroadcast);
+    const errBody = await dotNetRes.json().catch(() => ({}));
+    return res.status(dotNetRes.status).json(errBody);
+  } catch {
+    res.status(502).json({ message: 'Broadcast service unreachable' });
+  }
 });
 
 app.delete('/api/broadcasts/:id', async (req, res) => {
@@ -445,49 +418,14 @@ app.delete('/api/broadcasts/:id', async (req, res) => {
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
     });
     if (dotNetRes.ok || dotNetRes.status === 404) {
-      // Remove from local cache
-      const idx = broadcasts.findIndex((item) => String(item.id) === broadcastId);
-      if (idx >= 0) broadcasts.splice(idx, 1);
-      saveJson(BROADCASTS_FILE, broadcasts);
-      // Push to all connected SSE clients
       sendBroadcastSSE('broadcast-deleted', { id: broadcastId });
       return res.json({ message: 'Broadcast removed successfully' });
     }
-  } catch {}
-
-  // Fallback to local removal
-  const index = broadcasts.findIndex((item) => String(item.id) === broadcastId);
-  if (index === -1) return res.status(404).json({ message: 'Broadcast not found' });
-  broadcasts.splice(index, 1);
-  saveJson(BROADCASTS_FILE, broadcasts);
-  // Push to all connected SSE clients
-  sendBroadcastSSE('broadcast-deleted', { id: broadcastId });
-  res.json({ message: 'Broadcast removed successfully' });
+    return res.status(dotNetRes.status).json({ message: 'Delete failed' });
+  } catch {
+    res.status(502).json({ message: 'Broadcast service unreachable' });
+  }
 });
-
-// ── Background broadcast sync from .NET API ──────────────────────────
-const syncBroadcastsFromDotNet = async () => {
-  try {
-    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Broadcasts`, {
-      headers: { 'Content-Type': 'application/json' },
-    }, 8000);
-    if (dotNetRes.ok) {
-      const data = await dotNetRes.json();
-      const raw = Array.isArray(data) ? data : data?.$values ?? data?.data ?? data?.value ?? [];
-      const mapped = (Array.isArray(raw) ? raw : []).map(d => fromDotNetBroadcast(d));
-      const before = JSON.stringify(broadcasts);
-      broadcasts.length = 0; broadcasts.push(...mapped);
-      expireBroadcasts();
-      saveJson(BROADCASTS_FILE, broadcasts);
-      // Only emit SSE event if broadcasts actually changed
-      if (JSON.stringify(broadcasts) !== before) {
-        sendBroadcastSSE('broadcasts', broadcasts);
-      }
-    }
-  } catch {}
-};
-// Sync every 60 seconds
-setInterval(syncBroadcastsFromDotNet, 60000);
 
 app.post('/api/products', (req, res) => {
   const product = req.body;

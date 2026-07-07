@@ -47,7 +47,11 @@ const showToastForAlert = (alert) => {
 
   // Play a soft announcement audio tone
   try {
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const audioCtx = new AudioCtx();
+    audioCtx.onerror = () => {};
+    if (audioCtx.state === 'suspended') audioCtx.resume();
     const oscillator = audioCtx.createOscillator();
     const gainNode = audioCtx.createGain();
     oscillator.connect(gainNode);
