@@ -3,7 +3,7 @@ import { MessageSquare, Search, Trash2, Mail, CheckCircle2, AlertCircle, Send, C
 import { toast } from "react-hot-toast";
 import { formatDate } from "../../utils/format";
 
-const QUERIES_API = "https://localhost:7015/api/ContactQueries";
+const QUERIES_API = "/api/contact/queries";
 
 const getAuthHeaders = () => {
   const headers = { "Content-Type": "application/json" };
@@ -103,19 +103,10 @@ export const AdminQueries = () => {
 
     setSubmittingReply(true);
     try {
-      const res = await apiFetch(`/${item.id}`, {
-        method: "PUT",
+      const res = await apiFetch(`/${item.id}/reply`, {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          Id: item.id,
-          Name: item.name,
-          Email: item.email,
-          Subject: item.subject,
-          Message: item.message,
-          Reply: replyText.trim(),
-          Status: "Replied",
-          RepliedAt: new Date().toISOString(),
-        }),
+        body: JSON.stringify({ reply: replyText.trim() }),
       });
       if (!res.ok) throw new Error("Reply failed");
       const data = await res.json();

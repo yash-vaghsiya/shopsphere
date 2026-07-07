@@ -1113,7 +1113,64 @@ app.delete('/api/newsletter/subscribers/:id', (req, res) => {
   res.json({ message: 'Subscriber removed' });
 });
 
-// Contact queries are handled client-side directly against the .NET API (https://localhost:7015/api/ContactQueries)
+// ── Contact Queries (proxy to .NET API + local reply storage) ──────────
+const CONTACT_REPLIES_FILE = path.join(DATA_DIR, 'contact-replies.json');
+const contactReplies = loadJson(CONTACT_REPLIES_FILE, {});
+
+app.get('/api/contact/queries', async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/ContactQueries`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+    }, 5000);
+    if (dotNetRes.ok) {
+      const data = await dotNetRes.json();
+      const raw = Array.isArray(data) ? data : data?.$values ?? data?.data ?? data?.value ?? [];
+      const mapped = (Array.isArray(raw) ? raw : []).map(d => {
+        const id = d.id ?? d.Id;
+        const local = contactReplies[String(id)];
+        return {
+          id,
+          name: d.name ?? d.Name ?? '',
+          email: d.email ?? d.Email ?? '',
+          subject: d.subject ?? d.Subject ?? '',
+          message: d.message ?? d.Message ?? '',
+          reply: local?.reply ?? d.reply ?? d.Reply ?? null,
+          status: local?.status ?? d.status ?? d.Status ?? 'pending',
+          createdAt: d.createdAt ?? d.CreatedAt ?? new Date().toISOString(),
+          repliedAt: local?.repliedAt ?? d.repliedAt ?? d.RepliedAt ?? null,
+        };
+      });
+      return res.json(mapped);
+    }
+  } catch {}
+  res.json([]);
+});
+
+app.post('/api/contact/queries/:id/reply', (req, res) => {
+  const id = Number(req.params.id);
+  const { reply } = req.body || {};
+  if (!reply) return res.status(400).json({ message: 'Reply text is required' });
+  const local = { reply, status: 'replied', repliedAt: new Date().toISOString() };
+  contactReplies[String(id)] = local;
+  saveJson(CONTACT_REPLIES_FILE, contactReplies);
+  res.json({ query: { id, ...local } });
+});
+
+app.delete('/api/contact/queries/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  delete contactReplies[String(id)];
+  saveJson(CONTACT_REPLIES_FILE, contactReplies);
+  try {
+    const token = getBearerToken(req);
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/ContactQueries/${id}`, {
+      method: 'DELETE',
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+    }, 5000);
+    if (dotNetRes.ok || dotNetRes.status === 404) return res.json({ message: 'Query removed' });
+  } catch {}
+  res.json({ message: 'Query removed' });
+});
 
 // Users endpoint (admin customers)
 app.get('/api/users', async (req, res) => {
