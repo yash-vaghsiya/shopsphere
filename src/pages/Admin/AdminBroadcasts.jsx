@@ -40,8 +40,10 @@ const normalizeBroadcast = (d) => {
   return { id, title, message, type: d.type ?? d.Type ?? 'info', createdAt: d.createdAt ?? d.CreatedAt ?? new Date().toISOString() };
 };
 
+const BROADCASTS_API = "https://localhost:7015/api/Broadcasts";
+
 const apiFetch = async (path, options = {}) =>
-  fetch(`/api/broadcasts${path}`, {
+  fetch(`${BROADCASTS_API}${path}`, {
     ...options,
     headers: { ...getAuthHeaders(), ...options.headers },
   });
@@ -120,7 +122,7 @@ export const AdminBroadcasts = () => {
       const res = await apiFetch("", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: title.trim(), message: message.trim(), type }),
+        body: JSON.stringify({ Title: title.trim(), Message: message.trim(), Type: type }),
       });
 
       if (res.ok) {
