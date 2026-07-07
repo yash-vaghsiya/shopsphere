@@ -405,8 +405,8 @@ export const AdminBroadcasts = () => {
 
             <div className="pt-4 border-t border-gray-100 dark:border-gray-850 flex flex-col sm:flex-row items-center justify-between text-[11px] text-gray-400 font-bold gap-3">
               <div className="flex items-center gap-1.5">
-                <span className={`w-1.5 h-1.5 rounded-full ${connected ? "bg-emerald-500" : "bg-red-500"}`} />
-                <span>{connected ? "Live — SQL Database connected" : "Offline — API unreachable"}</span>
+                {/* <span className={`w-1.5 h-1.5 rounded-full ${connected ? "bg-emerald-500" : "bg-red-500"}`} /> */}
+                {/* <span>{connected ? "Live — SQL Database connected" : "Offline — API unreachable"}</span> */}
               </div>
               <button
                 type="button"
