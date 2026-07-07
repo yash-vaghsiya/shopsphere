@@ -9,12 +9,13 @@ import { axiosInstance } from "../../services/api";
 export const Contact = () => {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [subject, setSubject] = useState("");
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!name.trim() || !email.trim() || !msg.trim()) {
+    if (!name.trim() || !email.trim() || !subject.trim() || !msg.trim()) {
       toast.error("Please fill in all details.");
       return;
     }
@@ -24,10 +25,12 @@ export const Contact = () => {
       const response = await axiosInstance.post("/api/contact/queries", {
         name,
         email,
+        subject,
         message: msg,
       });
       setName("");
       setEmail("");
+      setSubject("");
       setMsg("");
       toast.success(response.data.message || "Message dispatched successfully! We'll reply within 24 hours.");
     } catch (err) {
@@ -113,6 +116,14 @@ export const Contact = () => {
                 required
               />
             </div>
+
+            <Input
+              label="Subject *"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              placeholder="e.g. Wholesale Inquiry, Order Support, Feedback"
+              required
+            />
 
             <div className="space-y-2">
               <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider mb-2">
