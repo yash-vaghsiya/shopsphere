@@ -233,13 +233,16 @@ const contentHash = (s) => {
   return Math.abs(h);
 };
 
-const fromDotNetBroadcast = (d) => ({
-  id: d.id ?? d.Id ?? contentHash((d.title ?? d.Title ?? '') + (d.message ?? d.Message ?? '') + (d.createdAt ?? d.CreatedAt ?? '')),
-  title: d.title ?? d.Title ?? '',
-  message: d.message ?? d.Message ?? '',
-  type: d.type ?? d.Type ?? 'info',
-  createdAt: d.createdAt ?? d.CreatedAt ?? d.createdAt ?? new Date().toISOString(),
-});
+const fromDotNetBroadcast = (d) => {
+  const title = d.title ?? d.Title ?? '';
+  const message = d.message ?? d.Message ?? '';
+  const id = d.id ?? d.Id ?? d.broadcastId ?? d.BroadcastId ?? contentHash(title + message);
+  const type = d.category ?? d.Category ?? d.type ?? d.Type ?? 'info';
+  return {
+    id, title, message, type,
+    createdAt: d.createdAt ?? d.CreatedAt ?? new Date().toISOString(),
+  };
+};
 
 // Proxy: POST /api/coupons → .NET API POST /Discounts
 app.post('/api/coupons', async (req, res) => {
@@ -379,32 +382,32 @@ app.get('/api/broadcasts', async (req, res) => {
 });
 
 app.post('/api/broadcasts', async (req, res) => {
-  const { title, message, type } = req.body || {};
+  const b = req.body || {};
+  const title = b.title ?? b.Title ?? '';
+  const message = b.message ?? b.Message ?? '';
+  const type = b.type ?? b.Type ?? 'info';
   if (!title || !message) {
     return res.status(400).json({ message: 'Broadcast title and message are required.' });
   }
 
   try {
     const token = getBearerToken(req);
-    const broadcastBody = toDotNetBroadcast({ title: String(title).trim(), message: String(message).trim(), type: type || 'info' });
-    const pascalDto = {};
-    Object.keys(broadcastBody).forEach((k) => { pascalDto[k.charAt(0).toUpperCase() + k.slice(1)] = broadcastBody[k]; });
-    const dotNetBody = { dto: pascalDto, ...broadcastBody, ...pascalDto };
+    const body = { title: String(title).trim(), message: String(message).trim(), type: type || 'info' };
+    const dotNetBody = { Title: body.title, Message: body.message, Category: body.type };
     const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Broadcasts`, {
       method: 'POST',
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
       body: JSON.stringify(dotNetBody),
-    });
+    }, 30000);
     if (dotNetRes.ok) {
-      const data = await dotNetRes.json();
-      const created = fromDotNetBroadcast(data?.data ?? data?.value ?? data ?? {});
+      const created = { id: contentHash(body.title + body.message), title: body.title, message: body.message, type: body.type, createdAt: new Date().toISOString() };
       sendBroadcastSSE('broadcast-created', created);
       return res.status(201).json(created);
     }
-    const errBody = await dotNetRes.json().catch(() => ({}));
-    return res.status(dotNetRes.status).json(errBody);
-  } catch {
-    res.status(502).json({ message: 'Broadcast service unreachable' });
+    const text = await dotNetRes.text().catch(() => '');
+    try { return res.status(dotNetRes.status).json(JSON.parse(text)); } catch { return res.status(dotNetRes.status).json({ message: text || dotNetRes.statusText }); }
+  } catch (err) {
+    res.status(502).json({ message: `Broadcast service unreachable: ${err?.message || err || 'unknown'}` });
   }
 });
 
