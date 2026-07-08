@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { MessageSquare, Search, Trash2, Mail, CheckCircle2, AlertCircle, Send, CornerDownRight, X, Clock } from "lucide-react";
+import { MessageSquare, Search, Trash2, CheckCircle2, AlertCircle, Clock } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { formatDate } from "../../utils/format";
 
@@ -51,11 +51,6 @@ export const AdminQueries = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState('all');
-  
-  const [replyingToId, setReplyingToId] = useState(null);
-  const [replyText, setReplyText] = useState("");
-  const [submittingReply, setSubmittingReply] = useState(false);
-  const [lastEmailSent, setLastEmailSent] = useState(null);
 
   const fetchQueries = async () => {
     try {
@@ -85,49 +80,8 @@ export const AdminQueries = () => {
       if (!res.ok && res.status !== 404) throw new Error("Delete failed");
       toast.success(`Query from ${name} successfully deleted.`);
       setQueries((prev) => prev.filter((q) => q.id !== id));
-      if (replyingToId === id) {
-        setReplyingToId(null);
-        setReplyText("");
-      }
     } catch {
       toast.error("Failed to delete query.");
-    }
-  };
-
-  const handleSendReply = async (e, item) => {
-    e.preventDefault();
-    if (!replyText.trim()) {
-      toast.error("Reply message cannot be empty.");
-      return;
-    }
-
-    setSubmittingReply(true);
-    try {
-      const res = await apiFetch(`/${item.id}/reply`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reply: replyText.trim() }),
-      });
-      if (!res.ok) throw new Error("Reply failed");
-      const data = await res.json();
-      const updatedQuery = normalizeQuery(data?.query ?? data?.data ?? data ?? {});
-      setQueries((prev) => prev.map((q) => q.id === item.id ? updatedQuery : q));
-
-      setLastEmailSent({
-        to: item.email,
-        name: item.name,
-        subject: "RE: Your inquiry on ShopSphere",
-        body: replyText.trim()
-      });
-
-      toast.success("Reply successfully saved!");
-      
-      setReplyingToId(null);
-      setReplyText("");
-    } catch {
-      toast.error("Failed to submit reply.");
-    } finally {
-      setSubmittingReply(false);
     }
   };
 
@@ -164,40 +118,6 @@ export const AdminQueries = () => {
           </p>
         </div>
       </div>
-
-      {/* Live Email Simulation Banner */}
-      {lastEmailSent && (
-        <div className="p-4 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-150 dark:border-emerald-900/60 rounded-2xl relative">
-          <button
-            onClick={() => setLastEmailSent(null)}
-            className="absolute top-3.5 right-3.5 text-emerald-605 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-250 bg-transparent border-0 outline-none cursor-pointer p-1 rounded-lg"
-            title="Dismiss simulated mail delivery popup"
-          >
-            <X size={15} />
-          </button>
-          <div className="flex items-start gap-3">
-            <div className="p-2 bg-emerald-500/10 text-[#10b981] rounded-xl shrink-0 mt-0.5">
-              <CheckCircle2 size={18} />
-            </div>
-            <div className="space-y-2">
-              <h4 className="text-xs font-black uppercase text-emerald-800 dark:text-emerald-400 tracking-wider">
-                Simulated Email Dispatch Triggered Successfully ✉️
-              </h4>
-              <p className="text-xs text-gray-650 dark:text-gray-300">
-                The ShopSphere mail dispatcher has simulated a successful delivery loop to the user's secure server.
-              </p>
-              
-              <div className="bg-white/80 dark:bg-gray-950 p-3 rounded-xl border border-emerald-100 dark:border-emerald-900/40 text-[11px] font-mono space-y-1 text-gray-700 dark:text-gray-300 select-all">
-                <div><span className="text-gray-400 font-bold">To:</span> {lastEmailSent.name} &lt;{lastEmailSent.to}&gt;</div>
-                <div><span className="text-gray-400 font-bold">Subject:</span> {lastEmailSent.subject}</div>
-                <div className="border-t border-gray-100 dark:border-gray-900 my-1.5 pt-1.5 whitespace-pre-line text-xs font-sans italic text-gray-600 dark:text-gray-350">
-                  {`Hi ${lastEmailSent.name},\n\nOur admin team has replied to your query:\n\n"${lastEmailSent.body}"\n\nBest regards,\nShopSphere Support`}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Statistics and Filtering Navigation Row */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
@@ -355,113 +275,10 @@ export const AdminQueries = () => {
                     <div className="p-4 bg-gray-50 dark:bg-gray-950 rounded-2xl border border-gray-100 dark:border-gray-850 text-xs sm:text-sm text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap">
                       {query.message}
                     </div>
-
-                    {/* Display Exist Reply */}
-                    {query.status === 'replied' && query.reply && (
-                      <div className="pl-4 sm:pl-6 pt-1 flex items-start gap-2">
-                        <CornerDownRight size={14} className="text-gray-400 mt-1.5 shrink-0" />
-                        <div className="flex-1 space-y-1.5">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] font-black uppercase text-blue-600 tracking-wider">
-                              Official Admin Reply
-                            </span>
-                            <span className="text-[10px] text-gray-400 font-mono">
-                              {query.repliedAt && formatDate(query.repliedAt)}
-                            </span>
-                          </div>
-                          
-                          <div className="p-3.5 bg-blue-50/30 dark:bg-blue-950/15 border border-blue-100/50 dark:border-blue-900/10 text-xs text-gray-700 dark:text-gray-355 rounded-2xl leading-relaxed whitespace-pre-wrap">
-                            {query.reply}
-                          </div>
-
-                          <span className="text-[9px] text-emerald-600 dark:text-emerald-450 flex items-center gap-1">
-                            <CheckCircle2 size={10} />
-                            Delivered simulated notification dispatch to {query.email}
-                          </span>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Reply Composer Inline Form */}
-                    {replyingToId === query.id && (
-                      <div className="pl-4 sm:pl-6 pt-3">
-                        <form onSubmit={(e) => handleSendReply(e, query)} className="space-y-3 bg-gray-50/50 dark:bg-gray-950/50 p-4 rounded-2xl border border-gray-150 dark:border-gray-800">
-                          <div className="flex items-center justify-between">
-                            <h4 className="text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider flex items-center gap-1">
-                              <Mail size={12} className="text-blue-500" />
-                              Compose Reply to {query.name}
-                            </h4>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setReplyingToId(null);
-                                setReplyText("");
-                              }}
-                              className="text-xs text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 border-0 bg-transparent cursor-pointer p-0.5"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-
-                          <textarea
-                            disabled={submittingReply}
-                            required
-                            rows={3}
-                            value={replyText}
-                            onChange={(e) => setReplyText(e.target.value)}
-                            placeholder={`Dear ${query.name.split(" ")[0]},\n\nThank you for reaching out to ShopSphere. regarding your question...`}
-                            className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-950 border border-gray-300 dark:border-gray-700 rounded-xl text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500 outline-none transition-all resize-none"
-                          />
-
-                          <div className="flex justify-between items-center">
-                            <span className="text-[10px] text-gray-400 italic">
-                              Will simulate instant SMTP transmission upon dispatch.
-                            </span>
-                            <button
-                              type="submit"
-                              disabled={submittingReply || !replyText.trim()}
-                              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all border-0 shadow-md flex items-center gap-1.5 cursor-pointer"
-                            >
-                              <Send size={11} />
-                              {submittingReply ? "Dispatching..." : "Send Reply"}
-                            </button>
-                          </div>
-                        </form>
-                      </div>
-                    )}
-
                   </div>
 
                   {/* Actions buttons */}
                   <div className="flex items-center gap-1.5 self-end sm:self-start">
-                    {query.status === 'pending' && replyingToId !== query.id && (
-                      <button
-                        onClick={() => {
-                          setReplyingToId(query.id);
-                          setReplyText(`Dear ${query.name.split(" ")[0]},\n\n`);
-                        }}
-                        type="button"
-                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] uppercase tracking-wider rounded-lg transition-all border-0 shadow-sm cursor-pointer"
-                        title="Compose reply email"
-                      >
-                        Reply
-                      </button>
-                    )}
-
-                    {query.status === 'replied' && replyingToId !== query.id && (
-                      <button
-                        onClick={() => {
-                          setReplyingToId(query.id);
-                          setReplyText(query.reply || "");
-                        }}
-                        type="button"
-                        className="px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 dark:bg-gray-850 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300 font-bold text-[10px] uppercase tracking-wider rounded-lg transition-all border-0 cursor-pointer"
-                        title="Edit previous reply email"
-                      >
-                        Edit Reply
-                      </button>
-                    )}
-
                     <button
                       onClick={() => handleDelete(query.id, query.name)}
                       type="button"
