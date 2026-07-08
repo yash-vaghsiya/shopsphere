@@ -5,7 +5,7 @@ import { Input } from "../../components/common/Input";
 import { Mail, Phone, MapPin, Send, MessageSquare } from "lucide-react";
 import { toast } from "react-hot-toast";
 
-const CONTACT_API = "https://localhost:7015/api/ContactQueries";
+const CONTACT_API = "/api/contact/submit";
 
 const getAuthHeaders = () => {
   const headers = { "Content-Type": "application/json" };
@@ -35,7 +35,7 @@ export const Contact = () => {
       const res = await fetch(CONTACT_API, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ Name: name.trim(), Email: email.trim(), Subject: subject.trim(), Message: msg.trim() }),
+        body: JSON.stringify({ name: name.trim(), email: email.trim(), subject: subject.trim(), message: msg.trim() }),
       });
 
       if (!res.ok) {

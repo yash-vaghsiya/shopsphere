@@ -1113,6 +1113,75 @@ app.delete('/api/contact/queries/:id', async (req, res) => {
   res.json({ message: 'Query removed' });
 });
 
+// ── Contact Form Submit (proxy to .NET API + send email) ──────────
+import nodemailer from 'nodemailer';
+
+app.post('/api/contact/submit', async (req, res) => {
+  const b = req.body || {};
+  const name = b.name ?? b.Name ?? '';
+  const email = b.email ?? b.Email ?? '';
+  const subject = b.subject ?? b.Subject ?? '';
+  const message = b.message ?? b.Message ?? '';
+  if (!name || !email || !subject || !message) {
+    return res.status(400).json({ message: 'All fields are required.' });
+  }
+
+  try {
+    const token = getBearerToken(req);
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/ContactQueries`, {
+      method: 'POST',
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ Name: name, Email: email, Subject: subject, Message: message }),
+    }, 15000);
+    if (!dotNetRes.ok) {
+      const text = await dotNetRes.text().catch(() => '');
+      return res.status(dotNetRes.status).json({ message: text || 'Database save failed' });
+    }
+
+    try {
+      const transporter = nodemailer.createTransport({
+        host: 'smtp.gmail.com',
+        port: 587,
+        secure: false,
+        auth: { user: 'yvai3006@gmail.com', pass: 'xwvy nkwx eyvc jvhk' },
+      });
+      await transporter.sendMail({
+        from: `"${name} (via ShopSphere)" <yvai3006@gmail.com>`,
+        to: 'yvai3006@gmail.com',
+        replyTo: email,
+        subject: `New Contact Query: ${subject}`,
+        text: `You received a new query from your ShopSphere store:\n\nFrom: ${name}\nEmail: ${email}\nSubject: ${subject}\n\nMessage:\n${message}\n\n---\nThis email was sent via the ShopSphere Contact Form.`,
+        html: `<div style="font-family:sans-serif;max-width:600px;margin:0 auto;">
+          <div style="background:#2563eb;color:white;padding:20px;border-radius:8px 8px 0 0;">
+            <h2 style="margin:0;">New Contact Query</h2>
+          </div>
+          <div style="border:1px solid #e5e7eb;padding:20px;border-radius:0 0 8px 8px;">
+            <table style="width:100%;border-collapse:collapse;">
+              <tr><td style="padding:8px 0;color:#6b7280;font-size:12px;">NAME</td></tr>
+              <tr><td style="padding:0 0 12px;font-weight:bold;">${name}</td></tr>
+              <tr><td style="padding:8px 0;color:#6b7280;font-size:12px;">EMAIL</td></tr>
+              <tr><td style="padding:0 0 12px;font-weight:bold;"><a href="mailto:${email}">${email}</a></td></tr>
+              <tr><td style="padding:8px 0;color:#6b7280;font-size:12px;">SUBJECT</td></tr>
+              <tr><td style="padding:0 0 12px;font-weight:bold;">${subject}</td></tr>
+              <tr><td style="padding:8px 0;color:#6b7280;font-size:12px;">MESSAGE</td></tr>
+              <tr><td style="padding:0 0 12px;background:#f9fafb;padding:12px;border-radius:4px;line-height:1.6;">${message}</td></tr>
+            </table>
+            <p style="color:#6b7280;font-size:12px;margin-top:16px;border-top:1px solid #e5e7eb;padding-top:12px;">
+              To reply directly to ${name}, click Reply — it will go to ${email}
+            </p>
+          </div>
+        </div>`,
+      });
+    } catch {
+      console.warn('[contact] Email send failed (non-blocking)');
+    }
+
+    res.status(201).json({ message: 'Query submitted successfully' });
+  } catch (err) {
+    res.status(502).json({ message: `Contact service unreachable: ${err?.message || err || 'unknown'}` });
+  }
+});
+
 // Users endpoint (admin customers)
 app.get('/api/users', async (req, res) => {
   try {
