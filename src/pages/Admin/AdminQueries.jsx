@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
 import { MessageSquare, Search, Trash2, CheckCircle2, AlertCircle, Clock } from "lucide-react";
-import { toast } from "react-hot-toast";
 import { formatDate } from "../../utils/format";
 
 const QUERIES_API = "/api/contact/queries";
@@ -28,8 +27,8 @@ const unwrapArray = (data) => {
   return null;
 };
 
-const normalizeQuery = (d) => ({
-  id: d.id ?? d.Id ?? d.queryId ?? d.QueryId,
+const normalizeQuery = (d, idx) => ({
+  id: d.id ?? d.Id ?? d.queryId ?? d.QueryId ?? `q-${idx}-${Date.now()}`,
   name: d.name ?? d.Name ?? '',
   email: d.email ?? d.Email ?? '',
   subject: d.subject ?? d.Subject ?? '',
@@ -58,9 +57,9 @@ export const AdminQueries = () => {
       if (!res.ok) throw new Error("Failed to fetch");
       const data = await res.json();
       const raw = unwrapArray(data);
-      setQueries(raw ? raw.map(normalizeQuery) : []);
+      setQueries(raw ? raw.map((d, i) => normalizeQuery(d, i)) : []);
     } catch {
-      toast.error("Failed to load user queries.");
+      console.error("Failed to load queries");
     } finally {
       setLoading(false);
     }
@@ -78,10 +77,9 @@ export const AdminQueries = () => {
     try {
       const res = await apiFetch(`/${id}`, { method: "DELETE" });
       if (!res.ok && res.status !== 404) throw new Error("Delete failed");
-      toast.success(`Query from ${name} successfully deleted.`);
       setQueries((prev) => prev.filter((q) => q.id !== id));
     } catch {
-      toast.error("Failed to delete query.");
+      console.error("Delete failed");
     }
   };
 
@@ -234,9 +232,9 @@ export const AdminQueries = () => {
           </div>
         ) : (
           <div className="divide-y divide-gray-100 dark:divide-gray-850">
-            {filteredQueries.map((query) => (
+            {filteredQueries.map((query, idx) => (
               <div 
-                key={query.id} 
+                key={query.id ?? `q-${idx}`} 
                 className={`p-5 transition-all ${
                   query.status === 'pending' 
                     ? 'bg-amber-500/[0.01] hover:bg-amber-500/[0.03]' 
