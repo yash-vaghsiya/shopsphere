@@ -70,10 +70,6 @@ export const AdminQueries = () => {
   }, []);
 
   const handleDelete = async (id, name) => {
-    if (!window.confirm(`Are you sure you want to permanently delete the query from ${name}?`)) {
-      return;
-    }
-
     try {
       const res = await apiFetch(`/${id}`, { method: "DELETE" });
       if (!res.ok && res.status !== 404) throw new Error("Delete failed");
