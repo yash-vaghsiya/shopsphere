@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
@@ -1100,11 +1101,14 @@ app.delete('/api/contact/queries/:id', async (req, res) => {
 // ── Contact Form Submit (proxy to .NET API + email via SMTP) ──────────
 import nodemailer from 'nodemailer';
 
+if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) {
+  console.warn('[SMTP] Missing SMTP_* environment variables. Emails will not be sent.');
+}
 const smtpTransport = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,
-  auth: { user: 'yvai3006@gmail.com', pass: 'xwvy nkwx eyvc jvhk' },
+  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  port: Number(process.env.SMTP_PORT) || 587,
+  secure: process.env.SMTP_SECURE === 'true',
+  auth: { user: process.env.SMTP_USER || '', pass: process.env.SMTP_PASS || '' },
 });
 
 app.post('/api/contact/submit', async (req, res) => {
@@ -1129,13 +1133,17 @@ app.post('/api/contact/submit', async (req, res) => {
       return res.status(dotNetRes.status).json({ message: text || 'Database save failed' });
     }
 
-    smtpTransport.sendMail({
-      from: `"${name}" <${email}>`,
-      replyTo: email,
-      to: 'yvai3006@gmail.com',
-      subject: `New Contact Query: ${subject}`,
-      html: `<p><strong>Name:</strong> ${name}</p><p><strong>Email:</strong> ${email}</p><p><strong>Subject:</strong> ${subject}</p><p><strong>Message:</strong></p><p>${message}</p>`,
-    }).catch(err => console.warn('[contact] Email send failed:', err.message));
+    const mailTo = process.env.SMTP_TO || process.env.SMTP_USER || '';
+    if (mailTo) {
+      const displayName = name || email.split('@')[0] || 'Customer';
+      smtpTransport.sendMail({
+        from: `"${displayName} via ShopSphere" <${process.env.SMTP_USER}>`,
+        replyTo: email,
+        to: mailTo,
+        subject: `New Contact Query: ${subject}`,
+        html: `<p><strong>Name:</strong> ${name}</p><p><strong>Email:</strong> <a href="mailto:${email}">${email}</a></p><p><strong>Subject:</strong> ${subject}</p><p><strong>Message:</strong></p><p>${message}</p><hr><p style="color:#888;font-size:12px;">Sent from ShopSphere contact form</p>`,
+      }).catch(err => console.warn('[contact] Email send failed:', err.message));
+    }
 
     res.status(201).json({ message: 'Query submitted successfully' });
   } catch (err) {
