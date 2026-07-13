@@ -3,9 +3,6 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 
-// Allow server-to-server fetch to accept self-signed .NET dev certs
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 app.use(express.json());
@@ -76,11 +73,30 @@ const products = [
 
 const orders = []; // in-memory only for backward-compatible order viewing; no JSON persistence
 
-app.get('/api/products', (req, res) => {
+app.get('/api/products', async (req, res) => {
+  try {
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Products`, {
+      headers: { 'Content-Type': 'application/json' },
+    }, 5000);
+    if (dotNetRes.ok) {
+      const data = await dotNetRes.json();
+      const raw = Array.isArray(data) ? data : data?.$values ?? data?.data ?? data?.value ?? [];
+      return res.json(raw);
+    }
+  } catch {}
   res.json(products);
 });
 
-app.get('/api/products/:id', (req, res) => {
+app.get('/api/products/:id', async (req, res) => {
+  try {
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Products/${req.params.id}`, {
+      headers: { 'Content-Type': 'application/json' },
+    }, 5000);
+    if (dotNetRes.ok) {
+      const data = await dotNetRes.json();
+      return res.json(data);
+    }
+  } catch {}
   const product = products.find((item) => String(item.id) === req.params.id);
   if (!product) {
     return res.status(404).json({ message: 'Product not found' });
@@ -120,7 +136,7 @@ app.get('/api/coupons', async (req, res) => {
     }
     res.status(dotNetRes.status).json(await dotNetRes.json().catch(() => ({ message: 'Proxy error' })));
   } catch {
-    res.status(502).json({ message: 'External API unreachable' });
+    res.json([]);
   }
 });
 
@@ -378,7 +394,7 @@ app.get('/api/broadcasts', async (req, res) => {
     }
     return res.status(dotNetRes.status).json({ message: 'Failed to fetch broadcasts' });
   } catch {
-    res.status(502).json({ message: 'Broadcast service unreachable' });
+    res.json([]);
   }
 });
 
@@ -478,11 +494,23 @@ app.patch('/api/products/:id', (req, res) => {
   res.json(product);
 });
 
-app.get('/api/orders', (req, res) => {
+app.get('/api/orders', async (req, res) => {
   const { email, role, userId, orderToken } = getUserFromHeader(req);
   if (!email && role !== 'Admin' && !orderToken) {
     return res.status(401).json({ message: 'Unauthorized. Please log in to view your orders.' });
   }
+
+  try {
+    const token = getBearerToken(req);
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Orders`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+    }, 5000);
+    if (dotNetRes.ok) {
+      const data = await dotNetRes.json();
+      const raw = Array.isArray(data) ? data : data?.$values ?? data?.data ?? data?.value ?? [];
+      if (Array.isArray(raw) && raw.length > 0) return res.json(raw);
+    }
+  } catch {}
 
   if (role === 'Admin') {
     return res.json(orders);
@@ -523,7 +551,7 @@ app.get('/api/orders/:id', (req, res) => {
 });
 
 // External API base URL for dynamic forwarding (server-to-server, no CORS)
-const EXTERNAL_API = process.env.VITE_API_URL || 'https://localhost:7015/api';
+const EXTERNAL_API = process.env.VITE_API_URL || 'http://localhost:7015/api';
 
 const decodeJwtPayload = (token) => {
   try { return JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString()); } catch { return {}; }
@@ -754,7 +782,17 @@ app.patch('/api/orders/:id', (req, res) => {
 
 let categories = loadJson(CATEGORIES_FILE, []);
 
-app.get('/api/categories', (req, res) => {
+app.get('/api/categories', async (req, res) => {
+  try {
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Categories`, {
+      headers: { 'Content-Type': 'application/json' },
+    }, 5000);
+    if (dotNetRes.ok) {
+      const data = await dotNetRes.json();
+      const raw = Array.isArray(data) ? data : data?.$values ?? data?.data ?? data?.value ?? [];
+      if (Array.isArray(raw) && raw.length > 0) return res.json(raw);
+    }
+  } catch {}
   res.json(categories);
 });
 
@@ -1148,6 +1186,22 @@ app.post('/api/contact/submit', async (req, res) => {
     res.status(201).json({ message: 'Query submitted successfully' });
   } catch (err) {
     res.status(502).json({ message: `Contact service unreachable: ${err?.message || err || 'unknown'}` });
+  }
+});
+
+// Proxy: GET /api/dashboard/top-products → .NET API
+app.get('/api/dashboard/top-products', async (req, res) => {
+  try {
+    const dotNetRes = await fetch(`${EXTERNAL_API}/Dashboard/top-products`, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (dotNetRes.ok) {
+      const data = await dotNetRes.json();
+      return res.json(data);
+    }
+    res.status(dotNetRes.status).json({ message: 'Failed to fetch top products' });
+  } catch {
+    res.json([]);
   }
 });
 
