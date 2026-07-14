@@ -95,7 +95,7 @@ export const ProfileForm = ({ user, onUpdate }) => {
         type="tel"
         value={phone}
         onChange={(e) => setPhone(e.target.value)}
-        placeholder="9876543210 (Optional)"
+        placeholder="9876543210"
       />
 
       <div className="flex justify-end pt-2">

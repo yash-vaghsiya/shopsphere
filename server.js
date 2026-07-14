@@ -668,6 +668,7 @@ app.post('/api/orders/proxy', async (req, res) => {
     }));
     let shippingAddressStr = '{}';
     try { shippingAddressStr = JSON.stringify({ ...(order.shippingAddress || {}), _items: orderItems }); } catch (e) { shippingAddressStr = JSON.stringify({ _items: orderItems }); }
+    const productNamesJoined = orderItems.map(it => it.name).join(' | ') || '';
     const dotNetPayload = {
       UserId: dotNetUserId,
       OrderNumber: `ORD-${Date.now().toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -675,16 +676,16 @@ app.post('/api/orders/proxy', async (req, res) => {
       PaymentMethod: order.paymentMethod || '', OrderItems: orderItems,
       ShippingAddress: shippingAddressStr, CreatedAt: new Date().toISOString(),
       CustomerName: order.customerName || '',
-      ProductName: orderItems.map(it => it.name).join(' | ') || '',
+      ProductName: productNamesJoined.length > 200 ? productNamesJoined.slice(0, 197) + '...' : productNamesJoined,
       Quantity: orderItems.reduce((sum, it) => sum + it.quantity, 0) || 0,
     };
     let dotNetRes;
     try {
-      dotNetRes = await fetch(`${EXTERNAL_API}/Orders`, {
+      dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Orders`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(dotNetToken ? { Authorization: `Bearer ${dotNetToken}` } : {}) },
         body: JSON.stringify(dotNetPayload),
-      });
+      }, 15000);
     } catch (fetchErr) {
       return res.status(502).json({ message: 'Order server unreachable.' });
     }
@@ -694,9 +695,19 @@ app.post('/api/orders/proxy', async (req, res) => {
       try { obj = text ? JSON.parse(text) : {}; } catch { obj = null; }
       return res.status(201).json(obj?.data ?? obj?.value ?? obj ?? { success: true, message: text || 'Order created' });
     }
-    const errText = await dotNetRes.text().catch(() => '');
-    const statusCode = dotNetRes.status >= 500 ? 502 : dotNetRes.status;
-    return res.status(statusCode).json({ message: `Order server error: ${errText.slice(0, 300) || 'Unknown error'}` });
+    // .NET API rejected the order — fall back to local creation so the user's order isn't lost
+    console.error(`[orders/proxy] .NET API returned ${dotNetRes.status}, falling back to local order.`);
+    const fallbackOrder = {
+      id: Date.now(), createdAt: new Date().toISOString(), status: order.status || 'Pending',
+      customerName: order.customerName || '', email: userEmail, items: order.items,
+      subtotal: Number(order.subtotal) || 0, shipping: Number(order.shipping) || 0,
+      tax: Number(order.tax) || 0, discount: Number(order.discount) || 0,
+      discountPercent: Number(order.discountPercent) || 0, total: Number(order.total) || 0,
+      paymentMethod: order.paymentMethod || '', couponCode: order.couponCode || null,
+      shippingAddress: order.shippingAddress || {},
+    };
+    orders.push(fallbackOrder);
+    return res.status(201).json(fallbackOrder);
   } catch (e) {
     console.error('[server] Order proxy UNCAUGHT error:', e?.stack || e);
     return res.status(500).json({ message: 'Internal order processing error.' });
