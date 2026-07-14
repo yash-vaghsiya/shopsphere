@@ -9,8 +9,6 @@ import { GoogleSignInButton } from "../../components/auth/GoogleSignInButton";
 import { axiosInstance } from "../../services/api";
 import { toast } from "react-hot-toast";
 
-const API_URL = import.meta.env.VITE_API_URL || "https://localhost:7015/api";
-
 export const Register = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
@@ -31,53 +29,21 @@ export const Register = () => {
 
     setLoading(true);
     try {
-      let data;
-      let normalizedUser;
-
-      try {
-        // Try external .NET API first (dynamic: real database)
-        const regRes = await fetch(`${API_URL}/Auth/register`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            dto: {},
-            firstName: firstName.trim(),
-            lastName: lastName.trim(),
-            phone: phone.trim(),
-            email: email.trim(),
-            password,
-          }),
-        });
-        if (!regRes.ok) throw new Error('External API rejected');
-        // Register succeeded — login to get JWT + user info
-        const loginRes = await fetch(`${API_URL}/Auth/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dto: {}, email: email.trim(), password }),
-        });
-        if (!loginRes.ok) throw new Error('Login after register failed');
-        const loginData = await loginRes.json();
-        const jwt = JSON.parse(atob(loginData.token.split('.')[1]));
-        data = { token: loginData.token, user: { id: String(jwt.UserId || jwt.userId || ''), name: `${firstName.trim()} ${lastName.trim()}`.trim(), email: email.trim(), phone: phone.trim(), role: String(email.trim()).toLowerCase().includes("admin") ? 'Admin' : 'Customer' } };
-        normalizedUser = data.user;
-      } catch (externalError) {
-        // Fallback to local mock server
-        const response = await axiosInstance.post("/api/auth/register", {
-          firstName: firstName.trim(),
-          lastName: lastName.trim(),
-          phone: phone.trim(),
-          email: email.trim(),
-          password,
-        });
-        data = response.data;
-        const serverRole = data.user?.role || 'Customer';
-        normalizedUser = {
-          ...data.user,
-          name: data.user.name || `${firstName.trim()} ${lastName.trim()}`.trim(),
-          phone: data.user.phone || phone.trim(),
-          role: String(email.trim()).toLowerCase().includes("admin") ? 'Admin' : serverRole,
-        };
-      }
+      const response = await axiosInstance.post("/api/auth/register", {
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        phone: phone.trim(),
+        email: email.trim(),
+        password,
+      });
+      const data = response.data;
+      const serverRole = data.user?.role || 'Customer';
+      const normalizedUser = {
+        ...data.user,
+        name: data.user.name || `${firstName.trim()} ${lastName.trim()}`.trim(),
+        phone: data.user.phone || phone.trim(),
+        role: String(email.trim()).toLowerCase().includes("admin") ? 'Admin' : serverRole,
+      };
 
       localStorage.setItem("token", data.token);
       localStorage.setItem("user", JSON.stringify(normalizedUser));

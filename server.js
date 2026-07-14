@@ -1,3 +1,4 @@
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 import 'dotenv/config';
 import express from 'express';
 import path from 'path';
@@ -9,7 +10,6 @@ app.use(express.json());
 
 const DATA_DIR = path.resolve('data');
 
-const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const CATEGORIES_FILE = path.join(DATA_DIR, 'categories.json');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -551,7 +551,7 @@ app.get('/api/orders/:id', (req, res) => {
 });
 
 // External API base URL for dynamic forwarding (server-to-server, no CORS)
-const EXTERNAL_API = process.env.VITE_API_URL || 'http://localhost:7015/api';
+const EXTERNAL_API = process.env.VITE_API_URL || 'https://localhost:7016/api';
 
 const decodeJwtPayload = (token) => {
   try { return JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString()); } catch { return {}; }
@@ -597,14 +597,6 @@ const cacheDotNetUser = (email, result) => {
   dotNetUserCache.set(email, result);
 };
 
-const saveDotNetPassword = (email, pwd) => {
-  const idx = users.findIndex(u => u.email === email);
-  if (idx >= 0 && !users[idx].password) {
-    users[idx].password = pwd;
-    saveJson(USERS_FILE, users);
-  }
-};
-
 const ensureDotNetUser = async (email) => {
   try {
     if (!email) return null;
@@ -614,18 +606,13 @@ const ensureDotNetUser = async (email) => {
       if (Date.now() < exp) return cached;
       dotNetUserCache.delete(email);
     }
-    const localUser = users.find(u => u.email === email);
-    const passwords = [...new Set([
-      ...(localUser?.password ? [localUser.password] : []),
-      `auto_${email}`,
-      `google_${email}`,
-    ])];
+    const passwords = [`auto_${email}`, `google_${email}`];
     for (const pwd of passwords) {
       let result = await dotNetAuth(email, pwd);
-      if (result) { saveDotNetPassword(email, pwd); cacheDotNetUser(email, result); return result; }
-      const regRes = await dotNetRegister(email, pwd);
+      if (result) { cacheDotNetUser(email, result); return result; }
+      await dotNetRegister(email, pwd).catch(() => {});
       result = await dotNetAuth(email, pwd);
-      if (result) { saveDotNetPassword(email, pwd); cacheDotNetUser(email, result); return result; }
+      if (result) { cacheDotNetUser(email, result); return result; }
     }
   } catch (err) { console.error(`[ensureDotNetUser] threw:`, err); }
   return null;
@@ -851,60 +838,93 @@ app.delete('/api/products/:id', (req, res) => {
 const subscribers = [];
 
 
-// In-memory user store for mock auth fallback (loaded from disk)
-const users = loadJson(USERS_FILE, []);
-
 // Helper: forward auth request to external API
 const forwardAuth = async (endpoint, body) => {
   try {
-    const res = await fetch(`${EXTERNAL_API}${endpoint}`, {
+    const url = `${EXTERNAL_API}${endpoint}`;
+    console.log(`[forwardAuth] → POST ${url}`);
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
     if (res.ok) {
       const data = await res.json();
+      console.log(`[forwardAuth] ✓ ${res.status} from ${endpoint}`);
       return { ok: true, data };
     }
     const errData = await res.json().catch(() => ({}));
+    console.log(`[forwardAuth] ✗ ${res.status} from ${endpoint}:`, errData);
     return { ok: false, status: res.status, message: errData.message || errData.title || 'External auth failed' };
-  } catch {
+  } catch (err) {
+    console.error(`[forwardAuth] ✗ Network error for ${endpoint}:`, err.message);
     return { ok: false, message: 'External API unreachable' };
   }
 };
 
-// Mock auth endpoints
-app.get('/api/auth/me', (req, res) => {
+// Auth endpoints: proxy to .NET API
+app.get('/api/auth/me', async (req, res) => {
   const { email, role, userId } = getUserFromHeader(req);
   if (!email && !userId) {
     return res.status(401).json({ message: 'Not authenticated' });
   }
-  let user = users.find(u => u.email === email || String(u.id) === String(userId));
-  if (!user) {
-    const fallbackEmail = email || 'guest@shopsphere.com';
-    user = { id: userId || Date.now(), name: 'User', email: fallbackEmail, role: String(fallbackEmail).toLowerCase().includes("admin") ? 'Admin' : (role || 'Customer') };
+  try {
+    const token = getBearerToken(req);
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Customers/by-email/${encodeURIComponent(email || '')}`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+    }, 5000);
+    if (dotNetRes.ok) {
+      const c = await dotNetRes.json();
+      return res.json({ user: { id: c.id, name: [c.firstName, c.lastName].filter(Boolean).join(' ').trim() || c.email?.split('@')[0] || 'User', email: c.email || '', phone: c.phone || '', role: c.role || 'Customer', address: c.address, city: c.city, state: c.state, zipCode: c.zipCode } });
+    }
+  } catch {}
+  const token = getBearerToken(req);
+  if (token) {
+    const jwtPayload = decodeJwtPayload(token);
+    const id = jwtPayload.UserId || jwtPayload.userId || jwtPayload.sub || userId || '';
+    const jwtEmail = jwtPayload.Email || jwtPayload.email || jwtPayload.preferred_username || email || '';
+    return res.json({ user: { id, name: jwtEmail.split('@')[0] || 'User', email: jwtEmail, role: jwtPayload.Role || jwtPayload.role || role || 'Customer' } });
   }
-  res.json({ user });
+  res.json({ user: { id: userId || Date.now(), name: 'User', email: email || '', role: role || 'Customer' } });
 });
 
-app.patch('/api/auth/me', (req, res) => {
+app.patch('/api/auth/me', async (req, res) => {
   const { email, userId } = getUserFromHeader(req);
   if (!email && !userId) {
     return res.status(401).json({ message: 'Not authenticated' });
   }
-  const updates = req.body || {};
-  let user = users.find(u => u.email === email || String(u.id) === String(userId));
-  if (!user) {
-    user = { id: userId || Date.now(), email, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer' };
-    users.push(user);
-  }
-  if (updates.name) user.name = updates.name;
-  if (updates.phone) user.phone = updates.phone;
-  if (updates.address) user.address = updates.address;
-  if (updates.city) user.city = updates.city;
-  if (updates.state) user.state = updates.state;
-  if (updates.zipCode) user.zipCode = updates.zipCode;
-  res.json({ user });
+  try {
+    const token = getBearerToken(req);
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Customers/by-email/${encodeURIComponent(email || '')}`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+    }, 5000);
+    if (dotNetRes.ok) {
+      const existing = await dotNetRes.json();
+      const customerId = existing.id;
+      const updates = req.body || {};
+      const putBody = {
+        id: customerId,
+        firstName: updates.name?.split(' ')[0] || existing.firstName || '',
+        lastName: updates.name?.split(' ').slice(1).join(' ') || existing.lastName || '',
+        email: existing.email || email,
+        phone: updates.phone ?? existing.phone ?? '',
+        address: updates.address ?? existing.address ?? '',
+        city: updates.city ?? existing.city ?? '',
+        state: updates.state ?? existing.state ?? '',
+        zipCode: updates.zipCode ?? existing.zipCode ?? '',
+      };
+      const putRes = await fetchWithTimeout(`${EXTERNAL_API}/Customers/${customerId}`, {
+        method: 'PUT',
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+        body: JSON.stringify(putBody),
+      }, 5000);
+      if (putRes.ok) {
+        const updated = await putRes.json();
+        return res.json({ user: { id: updated.id, name: [updated.firstName, updated.lastName].filter(Boolean).join(' ').trim() || updated.email?.split('@')[0] || 'User', email: updated.email || '', phone: updated.phone || '', role: updated.role || 'Customer', address: updated.address, city: updated.city, state: updated.state, zipCode: updated.zipCode } });
+      }
+    }
+  } catch {}
+  return res.status(503).json({ message: 'Profile update service unavailable. Please try again later.' });
 });
 
 const wrapAsync = (fn) => (req, res, next) => {
@@ -937,21 +957,18 @@ app.post('/api/auth/register', wrapAsync(async (req, res) => {
       const token = loginExt.data.token;
       const jwtPayload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf-8'));
       const userId = String(jwtPayload.UserId || jwtPayload.userId || '');
-      const user = { id: userId, name: fullName, email, phone, password, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer' };
-      const idx = users.findIndex(u => u.email === email);
-      if (idx >= 0) users[idx] = user; else users.push(user);
-      saveJson(USERS_FILE, users);
+      const user = { id: userId, name: fullName, email, phone, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer' };
       return res.status(201).json({ user, token });
     }
   }
-  // Fall back to local mock — store password for credential verification
-  const id = Date.now();
-  const user = { id, name: fullName, email, phone: phone || '', password, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer' };
-  const idx = users.findIndex(u => u.email === email);
-  if (idx >= 0) users[idx] = user; else users.push(user);
-  saveJson(USERS_FILE, users);
-  const token = `mock-token-${id}`;
-  return res.status(201).json({ user: { id, name: fullName, email, phone: phone || '', role: user.role }, token });
+  if (ext.message === 'External API unreachable') {
+    // Fallback: session-only mock token (no persistence)
+    const mockId = `mock_${Date.now()}`;
+    const mockToken = `mock-jwt-${mockId}`;
+    const user = { id: mockId, name: fullName, email, phone, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer' };
+    return res.status(201).json({ user, token: mockToken });
+  }
+  return res.status(ext.status || 500).json({ message: ext.message || 'Registration failed' });
 }));
 
 app.post('/api/auth/login', wrapAsync(async (req, res) => {
@@ -966,26 +983,16 @@ app.post('/api/auth/login', wrapAsync(async (req, res) => {
     const token = ext.data.token;
     const jwtPayload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf-8'));
     const userId = String(jwtPayload.UserId || jwtPayload.userId || '');
-    const user = { id: userId, name: email.split('@')[0], email, password, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer' };
-    const idx = users.findIndex(u => u.email === email);
-    if (idx >= 0) users[idx] = user; else users.push(user);
-    saveJson(USERS_FILE, users);
+    const user = { id: userId, name: email.split('@')[0], email, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer' };
     return res.json({ user, token });
   }
-  // Fall back to local mock if external API is unreachable or the login endpoint doesn't exist (404)
-  if (ext.message === 'External API unreachable' || ext.status === 404) {
-    const existingUser = users.find(u => u.email === email);
-    if (!existingUser) {
-      return res.status(401).json({ message: 'Account not found. Please register first.' });
-    }
-    if (existingUser.password !== password) {
-      return res.status(401).json({ message: 'Invalid email or password.' });
-    }
-    const token = `mock-token-${existingUser.id}`;
-    saveJson(USERS_FILE, users);
-    return res.json({ user: { id: existingUser.id, name: existingUser.name, email: existingUser.email, role: existingUser.role }, token });
+  if (ext.message === 'External API unreachable') {
+    // Fallback: session-only mock token (no persistence)
+    const mockId = `mock_${Date.now()}`;
+    const mockToken = `mock-jwt-${mockId}`;
+    const user = { id: mockId, name: email.split('@')[0], email, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer' };
+    return res.json({ user, token: mockToken });
   }
-  // External API rejected the credentials — forward its error
   return res.status(ext.status || 401).json({ message: ext.message || 'Invalid email or password.' });
 }));
 
@@ -1023,7 +1030,6 @@ app.post('/api/auth/google', wrapAsync(async (req, res) => {
   const reg = await forwardAuth('/Auth/register', { dto: {}, firstName, lastName, phone, email, password: googlePassword });
   let dotNetToken = '';
   let dotNetUserId = '';
-  let user = users.find(u => u.email === email);
   if (reg.ok) {
     // Registered → login to get JWT
     const loginExt = await forwardAuth('/Auth/login', { dto: {}, email, password: googlePassword });
@@ -1043,26 +1049,16 @@ app.post('/api/auth/google', wrapAsync(async (req, res) => {
   }
 
   if (dotNetToken && dotNetUserId) {
-    // .NET API user created/found — use real JWT
-    let existingUser = users.find(u => u.email === email);
-    const userRecord = { id: dotNetUserId, name, email, phone, password: googlePassword, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer', picture, createdAt: new Date().toISOString() };
-    if (existingUser) Object.assign(existingUser, userRecord); else users.push(userRecord);
-    saveJson(USERS_FILE, users);
-    return res.json({ token: dotNetToken, user: { id: dotNetUserId, email, name, role: userRecord.role, picture } });
+    return res.json({ token: dotNetToken, user: { id: dotNetUserId, email, name, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer', picture } });
   }
 
-  // Fallback: create local user with mock token
-  if (!user) {
-    if (mode !== "signup") {
-      return res.status(404).json({ message: 'No account found with this Google email. Please register first.' });
-    }
-    const id = Date.now();
-    user = { id, name, email, phone, password: googlePassword, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer', picture, createdAt: new Date().toISOString() };
-    users.push(user);
-    saveJson(USERS_FILE, users);
+  if (reg.message === 'External API unreachable') {
+    // Fallback: session-only mock token (no persistence)
+    const mockId = `mock_${Date.now()}`;
+    const mockToken = `mock-jwt-${mockId}`;
+    return res.json({ token: mockToken, user: { id: mockId, email, name, role: String(email).toLowerCase().includes("admin") ? 'Admin' : 'Customer', picture } });
   }
-  const token = `mock-token-${user.id}`;
-  return res.json({ token, user: { id: user.id, email: user.email, name: user.name, role: user.role, picture: user.picture || picture } });
+  return res.status(reg.status || 500).json({ message: reg.message || 'Google sign-in failed' });
 }));
 
 // Newsletter endpoints
@@ -1228,7 +1224,7 @@ app.get('/api/users', async (req, res) => {
       return res.json(mapped);
     }
   } catch {}
-  res.json(users);
+  res.json([]);
 });
 
 // In-memory cart store per user (keyed by email)
