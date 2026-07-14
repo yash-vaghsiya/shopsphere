@@ -138,7 +138,22 @@ export const Checkout = () => {
       
       toast.success("Order processed successfully!");
       // Redirect with order statistics passed to success page
-      navigate("/checkout/success", { state: { orderId: resultAction.id, total: finalTotal } });
+      navigate("/checkout/success", {
+        state: {
+          orderId: resultAction.id,
+          total: finalTotal,
+          customerName: customerOrderData.customerName,
+          email: customerOrderData.email,
+          items: customerOrderData.items,
+          subtotal: customerOrderData.subtotal,
+          shipping: customerOrderData.shipping,
+          tax: customerOrderData.tax,
+          discount: customerOrderData.discount,
+          discountPercent: customerOrderData.discountPercent,
+          couponCode: customerOrderData.couponCode,
+          shippingAddress: customerOrderData.shippingAddress,
+        },
+      });
     } catch (err) {
       toast.error(err || "Failed to process e-commerce checkout.");
     } finally {

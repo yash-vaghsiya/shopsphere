@@ -1,6 +1,7 @@
 import { jsPDF } from "jspdf";
 import { formatCurrency, formatDate } from "./format";
 import { getActiveGlobalCurrency } from "../features/currency/currencySlice";
+import{discount, discountPercent, couponCode} from "../features/orders/orderSlice";
 
 export const downloadInvoicePDF = (order) => {
   const doc = new jsPDF();
@@ -25,8 +26,6 @@ export const downloadInvoicePDF = (order) => {
   const oEmail = get(order, 'email', 'Email');
   const oItems = get(order, 'items', 'Items', 'orderItems', 'OrderItems') || [];
   const oShippingAddress = get(order, 'shippingAddress', 'ShippingAddress') || {};
-  const oDiscount = safeNum(get(order, 'discount', 'Discount'));
-  const oCouponCode = get(order, 'couponCode', 'CouponCode', 'coupon', 'Coupon');
   const oPhone = get(oShippingAddress, 'phone', 'Phone', 'mobile', 'Mobile');
   const oFullName = get(oShippingAddress, 'fullName', 'FullName', 'name', 'Name');
   const oAddress = get(oShippingAddress, 'address', 'Address');
@@ -34,11 +33,22 @@ export const downloadInvoicePDF = (order) => {
   const oState = get(oShippingAddress, 'state', 'State');
   const oZip = get(oShippingAddress, 'zipCode', 'ZipCode', 'zip', 'Zip');
 
-  const itemSubtotal = oItems.reduce((s, it) => s + safeNum(it.price) * safeNum(it.quantity), 0);
+  const itemSubtotal = oItems.reduce((s, it) => s + safeNum(get(it, 'price', 'Price', 'unitPrice', 'UnitPrice')) * safeNum(get(it, 'quantity', 'Quantity')), 0);
   const subtotal = safeNum(get(order, 'subtotal', 'Subtotal', 'subTotal', 'SubTotal') || itemSubtotal);
   const shipping = safeNum(get(order, 'shipping', 'Shipping', 'shippingCost', 'ShippingCost', 'postage', 'Postage'));
   const tax = safeNum(get(order, 'tax', 'Tax', 'gst', 'GST', 'taxAmount', 'TaxAmount'));
   const total = safeNum(get(order, 'total', 'Total', 'amount', 'Amount', 'totalAmount', 'TotalAmount') || subtotal + shipping + tax);
+
+  let oDiscount = safeNum(get(order, 'discount', 'Discount'));
+  let oDiscountPercent = safeNum(get(order, 'discountPercent', 'DiscountPercent'));
+  const oCouponCode = get(order, 'couponCode', 'CouponCode', 'coupon', 'Coupon');
+  if (oDiscountPercent > 0 && oDiscountPercent <= 1) oDiscountPercent *= 100;
+  if (oDiscount === 0 && oDiscountPercent > 0 && subtotal > 0) {
+    oDiscount = parseFloat(((subtotal * oDiscountPercent) / 100).toFixed(2));
+  } else if (oDiscount === 0 && subtotal + shipping + tax - total > 0.5) {
+    oDiscount = parseFloat((subtotal + shipping + tax - total).toFixed(2));
+    if (subtotal > 0) oDiscountPercent = parseFloat(((oDiscount / subtotal) * 100).toFixed(1));
+  }
 
   let y = 20;
 
@@ -142,20 +152,21 @@ export const downloadInvoicePDF = (order) => {
   doc.setTextColor(55, 65, 81);
 
   oItems.forEach((item) => {
-    const splitName = doc.splitTextToSize(item.name || "", 90);
+    const iName = get(item, 'name', 'Name', 'productName', 'ProductName') || '';
+    const iPrice = safeNum(get(item, 'price', 'Price', 'unitPrice', 'UnitPrice'));
+    const iQty = safeNum(get(item, 'quantity', 'Quantity'));
+    const splitName = doc.splitTextToSize(iName, 90);
     const itemH = Math.max(splitName.length * 4.5, 6) + 4;
     checkSpace(itemH + 6);
 
     y += 2;
     splitName.forEach((ln, i) => doc.text(ln, margin + 4, y + 4 + i * 4.5));
 
-    const ip = safeNum(item.price);
-    const it = safeNum(item.price * item.quantity);
-    const ipFmt = formatCurrency(ip).replace(/[^\d,.-]/g, "").trim();
-    const itFmt = formatCurrency(it).replace(/[^\d,.-]/g, "").trim();
+    const ipFmt = formatCurrency(iPrice).replace(/[^\d,.-]/g, "").trim();
+    const itFmt = formatCurrency(iPrice * iQty).replace(/[^\d,.-]/g, "").trim();
 
     doc.text(`${currencyLabel} ${ipFmt}`, 120, y + 4, { align: "right" });
-    doc.text(String(safeNum(item.quantity)), 150, y + 4, { align: "center" });
+    doc.text(String(iQty), 150, y + 4, { align: "center" });
     doc.text(`${currencyLabel} ${itFmt}`, 195, y + 4, { align: "right" });
 
     y += Math.max(splitName.length * 4.5, 6);
@@ -190,7 +201,8 @@ export const downloadInvoicePDF = (order) => {
     y += 5;
     doc.setFont("helvetica", "normal");
     doc.setTextColor(107, 114, 128);
-    doc.text(`Promo Offer (${oCouponCode || "Applied"}):`, 150, y, { align: "right" });
+    const pctLabel = oDiscountPercent > 0 ? ` (${oDiscountPercent}% Off)` : '';
+    doc.text(`Promo Offer${pctLabel} (${oCouponCode || "Applied"}):`, 150, y, { align: "right" });
     doc.setFont("helvetica", "bold");
     doc.setTextColor(220, 38, 38);
     const dFmt = formatCurrency(oDiscount).replace(/[^\d,.-]/g, "").trim();

@@ -526,9 +526,24 @@ app.get('/api/orders', async (req, res) => {
   res.json(filteredOrders);
 });
 
-app.get('/api/orders/:id', (req, res) => {
+app.get('/api/orders/:id', async (req, res) => {
   const { email, role, userId, orderToken } = getUserFromHeader(req);
-  const order = orders.find((item) => String(item.id) === String(req.params.id));
+  // Try local orders first
+  let order = orders.find((item) => String(item.id) === String(req.params.id));
+
+  if (!order) {
+    // Not found locally — try .NET API
+    try {
+      const token = getBearerToken(req);
+      const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Orders/${req.params.id}`, {
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+      }, 5000);
+      if (dotNetRes.ok) {
+        const data = await dotNetRes.json();
+        order = data?.data ?? data?.value ?? data;
+      }
+    } catch {}
+  }
 
   if (!order) {
     return res.status(404).json({ message: 'Order not found' });
@@ -538,7 +553,6 @@ app.get('/api/orders/:id', (req, res) => {
     return res.json(order);
   }
 
-  // Allow access if owner token matches (for guest/anonymous buyers)
   if (orderToken && order.ownerToken && String(order.ownerToken) === String(orderToken)) {
     return res.json(order);
   }
@@ -640,7 +654,7 @@ app.post('/api/orders/proxy', async (req, res) => {
           const pwd = `auto_${userEmail}`;
           await dotNetRegister(userEmail, pwd);
           dotNetUser = await dotNetAuth(userEmail, pwd);
-          if (dotNetUser) saveDotNetPassword(userEmail, pwd);
+          if (dotNetUser) {/* no-op */}
         } catch {}
       }
       if (dotNetUser && dotNetUser.userId) {
@@ -678,6 +692,9 @@ app.post('/api/orders/proxy', async (req, res) => {
       CustomerName: order.customerName || '',
       ProductName: productNamesJoined.length > 200 ? productNamesJoined.slice(0, 197) + '...' : productNamesJoined,
       Quantity: orderItems.reduce((sum, it) => sum + it.quantity, 0) || 0,
+      Discount: Number(order.discount) || 0,
+      DiscountPercent: Number(order.discountPercent) || 0,
+      CouponCode: order.couponCode || null,
     };
     let dotNetRes;
     try {
@@ -687,13 +704,29 @@ app.post('/api/orders/proxy', async (req, res) => {
         body: JSON.stringify(dotNetPayload),
       }, 15000);
     } catch (fetchErr) {
-      return res.status(502).json({ message: 'Order server unreachable.' });
+      console.error(`[orders/proxy] .NET API unreachable, falling back to local order.`);
+      const localOrder = {
+        id: Date.now(), createdAt: new Date().toISOString(), status: order.status || 'Pending',
+        customerName: order.customerName || '', email: userEmail, items: order.items,
+        subtotal: Number(order.subtotal) || 0, shipping: Number(order.shipping) || 0,
+        tax: Number(order.tax) || 0, discount: Number(order.discount) || 0,
+        discountPercent: Number(order.discountPercent) || 0, total: Number(order.total) || 0,
+        paymentMethod: order.paymentMethod || '', couponCode: order.couponCode || null,
+        shippingAddress: order.shippingAddress || {},
+      };
+      orders.push(localOrder);
+      return res.status(201).json(localOrder);
     }
     if (dotNetRes.ok) {
       const text = await dotNetRes.text();
       let obj;
       try { obj = text ? JSON.parse(text) : {}; } catch { obj = null; }
-      return res.status(201).json(obj?.data ?? obj?.value ?? obj ?? { success: true, message: text || 'Order created' });
+      const netResult = obj?.data ?? obj?.value ?? obj ?? {};
+      // Merge in discount/coupon fields from original request (may not be returned by .NET)
+      const merged = { ...netResult, ...{ discount: Number(order.discount) || 0, discountPercent: Number(order.discountPercent) || 0, couponCode: order.couponCode || null, shipping: Number(order.shipping) || 0, tax: Number(order.tax) || 0, subtotal: Number(order.subtotal) || 0 } };
+      // Store locally so GET /api/orders/:id finds it here instead of re-fetching from .NET (which drops discount fields)
+      if (merged.id || netResult.id) orders.push(merged);
+      return res.status(201).json(merged);
     }
     // .NET API rejected the order — fall back to local creation so the user's order isn't lost
     console.error(`[orders/proxy] .NET API returned ${dotNetRes.status}, falling back to local order.`);
@@ -734,7 +767,7 @@ app.put('/api/orders/:id/status', async (req, res) => {
           const pwd = `auto_${email || ''}`;
           await dotNetRegister(email || '', pwd);
           dotNetUser = await dotNetAuth(email || '', pwd);
-          if (dotNetUser) saveDotNetPassword(email, pwd);
+          if (dotNetUser) {/* no-op */}
         } catch (e) {}
       }
       if (dotNetUser && dotNetUser.userId) {

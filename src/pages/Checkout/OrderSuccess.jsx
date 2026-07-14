@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { CheckCircle, ClipboardCheck, ShoppingBag, Eye, Download, FileText, CheckCircle2, RefreshCw } from "lucide-react";
 import { formatCurrency } from "../../utils/format";
@@ -14,31 +14,61 @@ export const OrderSuccess = () => {
   const orderId = stateData?.orderId || "MOCK-532152";
   const total = stateData?.total || 12450;
 
+  const buildFallbackOrder = () => ({
+    id: orderId,
+    customerName: stateData?.customerName || "Valued ShopSphere Customer",
+    email: stateData?.email || "customer@shopsphere.com",
+    items: stateData?.items || [
+      {
+        productId: 101,
+        name: "Aether Aura SoundPod Earbuds",
+        price: 129,
+        quantity: 1,
+        image: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600&auto=format&fit=crop&q=80",
+      },
+    ],
+    subtotal: stateData?.subtotal ?? total * 0.82,
+    shipping: stateData?.shipping ?? 199,
+    tax: stateData?.tax ?? total * 0.18,
+    discount: stateData?.discount ?? 0,
+    discountPercent: stateData?.discountPercent ?? 0,
+    couponCode: stateData?.couponCode ?? '',
+    total,
+    status: "Processing",
+    createdAt: new Date().toISOString(),
+    paymentMethod: "Card",
+    shippingAddress: stateData?.shippingAddress || {
+      fullName: "Valued ShopSphere Customer",
+      phone: "+91 98765 43210",
+      address: "Silicon Tech Ring Road",
+      city: "Bengaluru",
+      state: "KA",
+      zipCode: "560100",
+    },
+  });
+
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  // Auto-download helper
   const [autoDownloaded, setAutoDownloaded] = useState(false);
+  const resolvedRef = useRef(false);
 
   useEffect(() => {
-    // If we have a real order ID, fetch the full details to populate the invoice accurately
     if (stateData?.orderId) {
       setLoading(true);
+      resolvedRef.current = false;
       axiosInstance.get(`/api/orders/${stateData.orderId}`)
         .then((res) => {
-          setOrder(res.data);
-          // persist owner token mapping for later retrieval (guest purchases)
-          try {
-            if (res.data && res.data.id && res.data.ownerToken) {
-              const existing = JSON.parse(localStorage.getItem('orderTokens') || '{}');
-              existing[String(res.data.id)] = res.data.ownerToken;
-              localStorage.setItem('orderTokens', JSON.stringify(existing));
-            }
-          } catch (e) {
-            // ignore storage errors
-          }
-          // Auto trigger downloading invoice right away for ultimate convenience
           if (res.data) {
+            resolvedRef.current = true;
+            setOrder(res.data);
+            try {
+              if (res.data.id && res.data.ownerToken) {
+                const existing = JSON.parse(localStorage.getItem('orderTokens') || '{}');
+                existing[String(res.data.id)] = res.data.ownerToken;
+                localStorage.setItem('orderTokens', JSON.stringify(existing));
+              }
+            } catch (e) {}
             try {
               downloadInvoicePDF(res.data);
               setAutoDownloaded(true);
@@ -52,39 +82,15 @@ export const OrderSuccess = () => {
           console.error("Error retrieving detailed invoice information:", err);
         })
         .finally(() => {
+          if (!resolvedRef.current) {
+            const fb = buildFallbackOrder();
+            setOrder(fb);
+            try { downloadInvoicePDF(fb); setAutoDownloaded(true); } catch {}
+          }
           setLoading(false);
         });
     } else {
-      // Create highly compliant mock order model for fallback representation so it is printable!
-      const mockOrderObj = {
-        id: orderId,
-        customerName: "Valued ShopSphere Customer",
-        email: "customer@shopsphere.com",
-        items: [
-          {
-            productId: 101,
-            name: "Aether Aura SoundPod Earbuds",
-            price: 129,
-            quantity: 1,
-            image: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600&auto=format&fit=crop&q=80",
-          },
-        ],
-        subtotal: total * 0.82,
-        shipping: 199,
-        tax: total * 0.18,
-        total,
-        status: "Processing",
-        createdAt: new Date().toISOString(),
-        paymentMethod: "Card",
-        shippingAddress: {
-          fullName: "Valued ShopSphere Customer",
-          phone: "+91 98765 43210",
-          address: "Silicon Tech Ring Road",
-          city: "Bengaluru",
-          state: "KA",
-          zipCode: "560100",
-        },
-      };
+      const mockOrderObj = buildFallbackOrder();
       setOrder(mockOrderObj);
     }
   }, [stateData, orderId, total]);
