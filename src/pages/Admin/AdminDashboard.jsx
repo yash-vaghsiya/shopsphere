@@ -28,7 +28,6 @@ export const AdminDashboard = () => {
   const { products } = useSelector((state) => state.products);
   const { orders } = useSelector((state) => state.orders);
   const [customerCount, setCustomerCount] = useState(0);
-  const [topProducts, setTopProducts] = useState([]);
 
   useEffect(() => {
     dispatch(fetchProductsThunk({}));
@@ -40,17 +39,6 @@ export const AdminDashboard = () => {
       .then((res) => res.ok ? res.json() : [])
       .then((data) => setCustomerCount(Array.isArray(data) ? data.length : 0))
       .catch(() => setCustomerCount(0));
-  }, []);
-
-  useEffect(() => {
-    fetch(`${API_URL}/Dashboard/top-products`)
-      .then((res) => res.ok ? res.json() : [])
-      .then((data) => {
-        if (Array.isArray(data)) setTopProducts(data);
-        else if (data?.data && Array.isArray(data.data)) setTopProducts(data.data);
-        else if (data?.value && Array.isArray(data.value)) setTopProducts(data.value);
-      })
-      .catch(() => {});
   }, []);
 
   // Telemetry modulation state
@@ -335,7 +323,7 @@ export const AdminDashboard = () => {
       </div>
 
       <DashboardCards stats={stats} />
-      <DashboardVisuals products={products} orders={orders} topProducts={topProducts} />
+      <DashboardVisuals orders={orders} />
       <OrdersTable orders={orders.slice(0, 5)} />
     </div>
   );

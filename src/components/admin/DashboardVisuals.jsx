@@ -32,7 +32,7 @@ import {
 import { formatCurrency } from "../../utils/format";
 import { toast } from "react-hot-toast";
 
-export const DashboardVisuals = ({ products = [], orders = [], topProducts = [] }) => {
+export const DashboardVisuals = ({ orders = [] }) => {
   const [mounted, setMounted] = useState(false);
   const [revenueTimeframe, setRevenueTimeframe] = useState("12m");
   const [hoveredProduct, setHoveredProduct] = useState(null);
@@ -134,7 +134,7 @@ export const DashboardVisuals = ({ products = [], orders = [], topProducts = [] 
     ? monthlyTimelineData.slice(-3)
     : monthlyTimelineData.slice(0, 6);
 
-  // 2. TOP SELLING PRODUCTS CALCULATOR
+  // 2. TOP SELLING PRODUCTS – computed purely from order items (no simulated data)
   const productSalesMap = {};
 
   orders.forEach(ord => {
@@ -153,38 +153,9 @@ export const DashboardVisuals = ({ products = [], orders = [], topProducts = [] 
     });
   });
 
-  // Ensure default simulation populated for visual completeness
-  products.forEach(p => {
-    const pId = p.id;
-    if (!productSalesMap[pId]) {
-      // realistic weights based on product rating index
-      const simulatedQty = Math.round((p.rating || 4.2) * 5);
-        productSalesMap[pId] = {
-          id: pId,
-          name: p.name,
-          quantity: simulatedQty,
-          revenue: simulatedQty * p.price
-        };
-    }
-  });
-
-  const rawProductsData = Object.values(productSalesMap);
-  const topProductsByQty = [...rawProductsData]
+  const topProductsByQty = Object.values(productSalesMap)
     .sort((a, b) => b.quantity - a.quantity)
     .slice(0, 5);
-
-  const topProductsByRev = [...rawProductsData]
-    .sort((a, b) => b.revenue - a.revenue)
-    .slice(0, 5);
-
-  // Prefer API data if available
-  const displayTopProducts = topProducts.length > 0
-    ? topProducts.map((p) => ({
-        name: p.name ?? p.productName ?? p.ProductName ?? `Product #${p.productId ?? p.id}`,
-        quantity: p.quantity ?? p.Quantity ?? p.qty ?? p.sold ?? 0,
-        revenue: p.revenue ?? p.Revenue ?? p.total ?? 0,
-      }))
-    : topProductsByQty;
 
   // 3. FULFILLMENT ORDER VOLUME BY STATUS
   const statusCounts = {
@@ -341,7 +312,7 @@ export const DashboardVisuals = ({ products = [], orders = [], topProducts = [] 
         <div className="w-full h-72 min-w-0">
           {mounted ? (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={displayTopProducts} layout="vertical" margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+              <BarChart data={topProductsByQty} layout="vertical" margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
                 <XAxis 
                   type="number"
                   stroke="#94a3b8" 
@@ -372,7 +343,7 @@ export const DashboardVisuals = ({ products = [], orders = [], topProducts = [] 
                   onMouseEnter={(data) => setHoveredProduct(data.name)}
                   onMouseLeave={() => setHoveredProduct(null)}
                 >
-                  {displayTopProducts.map((entry, index) => (
+                  {topProductsByQty.map((entry, index) => (
                     <Cell 
                       key={`cell-${index}`} 
                       fill={hoveredProduct === entry.name ? "#059669" : "#10b981"}
