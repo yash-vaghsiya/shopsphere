@@ -1,7 +1,6 @@
 import { jsPDF } from "jspdf";
 import { formatCurrency, formatDate } from "./format";
 import { getActiveGlobalCurrency } from "../features/currency/currencySlice";
-import{discount, discountPercent, couponCode} from "../features/orders/orderSlice";
 
 export const downloadInvoicePDF = (order) => {
   const doc = new jsPDF();
