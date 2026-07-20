@@ -1,8 +1,10 @@
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+﻿process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import https from 'node:https';
+import http from 'node:http';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -877,11 +879,6 @@ app.delete('/api/products/:id', (req, res) => {
   products.splice(index, 1);
   res.json({ message: 'Product removed successfully' });
 });
-
-// Newsletter subscribers (in-memory)
-const subscribers = [];
-
-
 // Helper: forward auth request to external API
 const forwardAuth = async (endpoint, body) => {
   try {
@@ -1105,32 +1102,86 @@ app.post('/api/auth/google', wrapAsync(async (req, res) => {
   return res.status(reg.status || 500).json({ message: reg.message || 'Google sign-in failed' });
 }));
 
-// Newsletter endpoints
-app.post('/api/newsletter/subscribe', (req, res) => {
+// Newsletter endpoints - pure proxy to .NET API (no local storage)
+const httpsRequest = (method, urlStr, bodyStr, token) => new Promise((resolve, reject) => {
+  const urlObj = new URL(urlStr);
+  const lib = urlObj.protocol === 'https:' ? https : http;
+  const opts = {
+    hostname: urlObj.hostname,
+    port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
+    path: urlObj.pathname,
+    method,
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    rejectUnauthorized: false,
+  };
+  if (token) opts.headers['Authorization'] = `Bearer ${token}`;
+  const req = lib.request(opts, (res) => {
+    let data = '';
+    res.on('data', (c) => data += c);
+    res.on('end', () => resolve({ status: res.statusCode, ok: res.statusCode >= 200 && res.statusCode < 300, body: data }));
+  });
+  req.on('error', reject);
+  if (bodyStr) req.write(bodyStr);
+  req.end();
+});
+
+const toSub = (s) => ({
+  id: s.subscriberId ?? s.SubscriberId ?? s.id ?? s.Id ?? 0,
+  email: s.email ?? s.Email ?? '',
+  subscribedAt: s.createdAt ?? s.CreatedAt ?? s.subscribedAt ?? s.SubscribedAt ?? '',
+});
+
+app.post('/api/newsletter/subscribe', async (req, res) => {
   const { email } = req.body || {};
-  if (!email) {
-    return res.status(400).json({ message: 'Email is required' });
+  if (!email) return res.status(400).json({ message: 'Email is required' });
+
+  try {
+    const dotNetRes = await httpsRequest('POST', `${EXTERNAL_API}/Subscribers`, JSON.stringify({ email }), getBearerToken(req));
+    if (dotNetRes.ok) {
+      console.log(`[newsletter] Subscribed ${email} to database`);
+      return res.status(201).json({ message: 'Subscribed successfully! Welcome to ShopSphere updates.' });
+    }
+
+    console.error(`[newsletter] POST /Subscribers returned ${dotNetRes.status}: ${dotNetRes.body}`);
+    if (dotNetRes.status === 400 || dotNetRes.status === 409) {
+      return res.status(400).json({ message: 'Email is already subscribed' });
+    }
+    return res.status(dotNetRes.status).json({ message: dotNetRes.body || 'Subscription failed' });
+  } catch (err) {
+    console.error('[newsletter] .NET API unreachable:', err?.message || err);
+    return res.status(503).json({ message: 'Subscription service unavailable. Please try again later.' });
   }
-  const exists = subscribers.some(s => s.email === email);
-  if (exists) {
-    return res.status(400).json({ message: 'Email is already subscribed' });
-  }
-  subscribers.push({ id: Date.now(), email, subscribedAt: new Date().toISOString() });
-  res.status(201).json({ message: 'Subscribed successfully! Welcome to ShopSphere updates.' });
 });
 
-app.get('/api/newsletter/subscribers', (req, res) => {
-  res.json(subscribers);
+app.get('/api/newsletter/subscribers', async (req, res) => {
+  try {
+    const dotNetRes = await httpsRequest('GET', `${EXTERNAL_API}/Subscribers`, null, getBearerToken(req));
+    if (dotNetRes.ok) {
+      const parsed = JSON.parse(dotNetRes.body);
+      const items = Array.isArray(parsed) ? parsed : parsed?.$values ?? parsed?.data ?? parsed?.value ?? (parsed && typeof parsed === 'object' ? [parsed] : []);
+      return res.json(items.map(toSub));
+    }
+    return res.status(dotNetRes.status).json({ message: dotNetRes.body || 'Failed to fetch subscribers' });
+  } catch (err) {
+    console.error('[newsletter] GET /Subscribers failed:', err?.message || err);
+    return res.status(503).json({ message: 'Subscriber service unavailable' });
+  }
 });
 
-app.delete('/api/newsletter/subscribers/:id', (req, res) => {
-  const id = Number(req.params.id);
-  const index = subscribers.findIndex(s => s.id === id);
-  if (index === -1) {
-    return res.status(404).json({ message: 'Subscriber not found' });
+app.delete('/api/newsletter/subscribers/:id', async (req, res) => {
+  try {
+    const dotNetRes = await httpsRequest('DELETE', `${EXTERNAL_API}/Subscribers/${req.params.id}`, null, getBearerToken(req));
+    if (dotNetRes.ok) {
+      return res.json({ message: 'Subscriber removed' });
+    }
+    if (dotNetRes.status === 404) {
+      return res.status(404).json({ message: 'Subscriber not found' });
+    }
+    return res.status(dotNetRes.status).json({ message: dotNetRes.body || 'Failed to remove subscriber' });
+  } catch (err) {
+    console.error('[newsletter] DELETE /Subscribers failed:', err?.message || err);
+    return res.status(503).json({ message: 'Subscriber service unavailable' });
   }
-  subscribers.splice(index, 1);
-  res.json({ message: 'Subscriber removed' });
 });
 
 // ── Contact Queries (proxy to .NET API) ──────────────────
