@@ -53,7 +53,7 @@ const normalizeProduct = (p) => {
     trending: p.trending ?? p.Trending ?? false,
     rating: p.rating ?? p.Rating ?? 0,
     reviews: p.reviews ?? p.Reviews ?? [],
-    originalPrice: p.originalPrice ?? p.OriginalPrice ?? p.listPrice ?? p.ListPrice ?? (p.price ?? p.Price ?? 0) * 1.25,
+    originalPrice: p.originalPrice ?? p.OriginalPrice ?? p.listPrice ?? p.ListPrice ?? p.price ?? p.Price ?? 0,
     createdAt: p.createdAt ?? p.CreatedAt ?? p.createdDate ?? p.CreatedDate ?? '',
   };
 };
@@ -109,7 +109,7 @@ export const fetchProductsThunk = createAsyncThunk(
     try { nameCategories = JSON.parse(localStorage.getItem('productNameCategoryMap') || '{}'); } catch { nameCategories = {}; }
     try {
       const [prodResp, catResp] = await Promise.all([
-        fetch(`${API_URL}/Products`),
+        fetch(`/api/products`),
         axiosInstance.get("/api/categories").catch(() => null),
       ]);
       if (prodResp.ok) {

@@ -75,6 +75,9 @@ const products = [
 
 const orders = []; // in-memory only for backward-compatible order viewing; no JSON persistence
 
+// Tracks which products have active sale discounts (keyed by .NET API productId)
+const productDiscounts = new Map();
+
 app.get('/api/products', async (req, res) => {
   try {
     const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Products`, {
@@ -83,6 +86,15 @@ app.get('/api/products', async (req, res) => {
     if (dotNetRes.ok) {
       const data = await dotNetRes.json();
       const raw = Array.isArray(data) ? data : data?.$values ?? data?.data ?? data?.value ?? [];
+      // Merge active discount info into .NET API products
+      if (productDiscounts.size > 0) {
+        for (const item of raw) {
+          const pid = item.productId ?? item.ProductId ?? item.id ?? item.Id;
+          if (pid != null && productDiscounts.has(pid)) {
+            item.originalPrice = productDiscounts.get(pid);
+          }
+        }
+      }
       return res.json(raw);
     }
   } catch {}
@@ -853,21 +865,55 @@ app.delete('/api/categories/:id', (req, res) => {
   res.json({ message: 'Category deleted' });
 });
 
-app.patch('/api/products/:id/discount', (req, res) => {
+app.patch('/api/products/:id/discount', async (req, res) => {
   const productId = Number(req.params.id);
-  const product = products.find((item) => item.id === productId);
-  if (!product) {
-    return res.status(404).json({ message: 'Product not found' });
+  const { price, originalPrice } = req.body || {};
+
+  // Track discount state for .NET API products
+  if (originalPrice != null && Number(originalPrice) > Number(price)) {
+    productDiscounts.set(productId, Number(originalPrice));
+  } else if (originalPrice == null) {
+    productDiscounts.delete(productId);
   }
 
-  const updates = req.body || {};
-  if (updates.price !== undefined) {
-    product.price = Number(updates.price);
+  // Update local product if it exists (for fallback path)
+  const local = products.find((item) => item.id === productId);
+  if (local) {
+    if (price !== undefined) local.price = Number(price);
+    if (originalPrice !== undefined) local.originalPrice = originalPrice !== null ? Number(originalPrice) : null;
   }
-  if (updates.originalPrice !== undefined) {
-    product.originalPrice = updates.originalPrice !== null ? Number(updates.originalPrice) : null;
+
+  // Sync discount to .NET API products database
+  try {
+    const getRes = await fetchWithTimeout(`${EXTERNAL_API}/Products/${productId}`, {
+      headers: { 'Content-Type': 'application/json' },
+    }, 5000);
+    if (!getRes.ok) {
+      console.error(`[products] GET product ${productId} returned ${getRes.status}`);
+      throw new Error('GET failed');
+    }
+    const existing = await getRes.json();
+    const putBody = { ...existing, price: price !== undefined ? Number(price) : existing.price };
+    const putRes = await fetchWithTimeout(`${EXTERNAL_API}/Products/${productId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(putBody),
+    }, 5000);
+    if (putRes.ok) {
+      console.log(`[products] Discount synced for product ${productId}`);
+      const response = { ...existing, price: putBody.price };
+      if (productDiscounts.has(productId)) response.originalPrice = productDiscounts.get(productId);
+      return res.json(response);
+    }
+    console.error(`[products] PUT discount for ${productId} returned ${putRes.status}`);
+    throw new Error('PUT failed');
+  } catch (err) {
+    console.error(`[products] Failed to sync discount for product ${productId}:`, err?.message || err);
   }
-  res.json(product);
+
+  // Fallback: return updated local product if available
+  if (local) return res.json(local);
+  res.status(500).json({ message: 'Failed to update product discount' });
 });
 
 app.delete('/api/products/:id', (req, res) => {
