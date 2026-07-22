@@ -13,6 +13,7 @@ app.use(express.json());
 const DATA_DIR = path.resolve('data');
 
 const CATEGORIES_FILE = path.join(DATA_DIR, 'categories.json');
+const STOCK_FILE = path.join(DATA_DIR, 'productStock.json');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const loadJson = (file, fallback) => {
@@ -75,6 +76,49 @@ const products = [
 
 const orders = []; // in-memory only for backward-compatible order viewing; no JSON persistence
 
+// Express-managed product stock (persisted to data/productStock.json)
+const productStock = new Map(Object.entries(loadJson(STOCK_FILE, {})));
+const saveStock = () => {
+  const obj = {};
+  for (const [k, v] of productStock) obj[k] = v;
+  saveJson(STOCK_FILE, obj);
+};
+
+const syncStockToApi = async (productId, newStock) => {
+  try {
+    const getRes = await fetchWithTimeout(`${EXTERNAL_API}/Products/${productId}`, {
+      headers: { 'Content-Type': 'application/json' },
+    }, 5000);
+    if (!getRes.ok) return;
+    const existing = await getRes.json();
+    const putBody = { ...existing, stockQuantity: newStock };
+    await fetchWithTimeout(`${EXTERNAL_API}/Products/${productId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(putBody),
+    }, 5000);
+    console.log(`[stock] Synced product ${productId} stock=${newStock} to .NET API`);
+  } catch (err) {
+    console.error(`[stock] Failed to sync product ${productId} to .NET API:`, err.message);
+  }
+};
+
+const deductStock = (items) => {
+  for (const item of items) {
+    const pid = item.productId || item.id;
+    if (!pid) continue;
+    const key = String(pid);
+    const current = productStock.get(key);
+    const qty = item.quantity || 1;
+    if (current !== undefined) {
+      const newStock = Math.max(0, current - qty);
+      productStock.set(key, newStock);
+      syncStockToApi(pid, newStock);
+    }
+  }
+  saveStock();
+};
+
 // Tracks which products have active sale discounts (keyed by .NET API productId)
 const productDiscounts = new Map();
 
@@ -86,13 +130,17 @@ app.get('/api/products', async (req, res) => {
     if (dotNetRes.ok) {
       const data = await dotNetRes.json();
       const raw = Array.isArray(data) ? data : data?.$values ?? data?.data ?? data?.value ?? [];
-      // Merge active discount info into .NET API products
-      if (productDiscounts.size > 0) {
-        for (const item of raw) {
-          const pid = item.productId ?? item.ProductId ?? item.id ?? item.Id;
-          if (pid != null && productDiscounts.has(pid)) {
-            item.originalPrice = productDiscounts.get(pid);
+      for (const item of raw) {
+        const pid = item.productId ?? item.ProductId ?? item.id ?? item.Id;
+        if (pid != null && productDiscounts.has(pid)) {
+          item.originalPrice = productDiscounts.get(pid);
+        }
+        if (pid != null) {
+          const key = String(pid);
+          if (!productStock.has(key)) {
+            productStock.set(key, Number(item.stock ?? item.Stock ?? item.stockQuantity ?? item.StockQuantity ?? 0));
           }
+          item.stock = productStock.get(key);
         }
       }
       return res.json(raw);
@@ -508,6 +556,36 @@ app.patch('/api/products/:id', (req, res) => {
   res.json(product);
 });
 
+app.put('/api/products/:id', async (req, res) => {
+  const productId = Number(req.params.id);
+  const updates = req.body || {};
+
+  if (updates.stockQuantity !== undefined || updates.stock !== undefined) {
+    const newStock = Number(updates.stockQuantity ?? updates.stock);
+    if (!isNaN(newStock) && newStock >= 0) {
+      const key = String(productId);
+      productStock.set(key, newStock);
+      saveStock();
+    }
+  }
+
+  try {
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Products/${productId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...updates, productId }),
+    }, 10000);
+    if (dotNetRes.ok) {
+      const text = await dotNetRes.text();
+      return res.json({ success: true, message: text || 'Product updated' });
+    }
+    const errText = await dotNetRes.text().catch(() => '');
+    return res.status(dotNetRes.status).json({ message: errText || 'Update failed on backend' });
+  } catch (err) {
+    return res.status(502).json({ message: 'Backend API unreachable' });
+  }
+});
+
 app.get('/api/orders', async (req, res) => {
   const { email, role, userId, orderToken } = getUserFromHeader(req);
   if (!email && role !== 'Admin' && !orderToken) {
@@ -552,10 +630,18 @@ app.get('/api/orders/:id', async (req, res) => {
       const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Orders/${req.params.id}`, {
         headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
       }, 5000);
-      if (dotNetRes.ok) {
-        const data = await dotNetRes.json();
-        order = data?.data ?? data?.value ?? data;
+    if (dotNetRes.ok) {
+      const data = await dotNetRes.json();
+      const pid = data.productId ?? data.ProductId ?? data.id ?? data.Id;
+      if (pid != null) {
+        const key = String(pid);
+        if (!productStock.has(key)) {
+          productStock.set(key, Number(data.stock ?? data.Stock ?? data.stockQuantity ?? data.StockQuantity ?? 0));
+        }
+        data.stock = productStock.get(key);
       }
+      return res.json(data);
+    }
     } catch {}
   }
 
@@ -688,6 +774,7 @@ app.post('/api/orders/proxy', async (req, res) => {
         shippingAddress: order.shippingAddress || {},
       };
       orders.push(localOrder);
+      deductStock(order.items || []);
       return res.status(201).json(localOrder);
     }
     const orderItems = (order.items || []).map(it => ({
@@ -729,6 +816,7 @@ app.post('/api/orders/proxy', async (req, res) => {
         shippingAddress: order.shippingAddress || {},
       };
       orders.push(localOrder);
+      deductStock(order.items || []);
       return res.status(201).json(localOrder);
     }
     if (dotNetRes.ok) {
@@ -740,6 +828,7 @@ app.post('/api/orders/proxy', async (req, res) => {
       const merged = { ...netResult, ...{ discount: Number(order.discount) || 0, discountPercent: Number(order.discountPercent) || 0, couponCode: order.couponCode || null, shipping: Number(order.shipping) || 0, tax: Number(order.tax) || 0, subtotal: Number(order.subtotal) || 0 } };
       // Store locally so GET /api/orders/:id finds it here instead of re-fetching from .NET (which drops discount fields)
       if (merged.id || netResult.id) orders.push(merged);
+      deductStock(orderItems);
       return res.status(201).json(merged);
     }
     // .NET API rejected the order — fall back to local creation so the user's order isn't lost
@@ -754,6 +843,7 @@ app.post('/api/orders/proxy', async (req, res) => {
       shippingAddress: order.shippingAddress || {},
     };
     orders.push(fallbackOrder);
+    deductStock(order.items || []);
     return res.status(201).json(fallbackOrder);
   } catch (e) {
     console.error('[server] Order proxy UNCAUGHT error:', e?.stack || e);

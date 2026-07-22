@@ -100,7 +100,7 @@ export const AdminProducts = () => {
 
       let res;
       try {
-        res = await fetch(`${API_URL}/Products/${editingProduct.id}`, {
+        res = await fetch(`/api/products/${editingProduct.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(dotNetBody),
