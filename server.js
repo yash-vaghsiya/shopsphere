@@ -14,7 +14,6 @@ const DATA_DIR = path.resolve('data');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 
 const CATEGORIES_FILE = path.join(DATA_DIR, 'categories.json');
-const STOCK_FILE = path.join(DATA_DIR, 'productStock.json');
 const LOCAL_PRODUCTS_FILE = path.join(DATA_DIR, 'localProducts.json');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -98,14 +97,8 @@ const products = [
 
 const orders = []; // in-memory only for backward-compatible order viewing; no JSON persistence
 
-// Express-managed product stock (persisted to data/productStock.json)
+// Express-managed product stock (synced directly to SQL server)
 const localProducts = loadJson(LOCAL_PRODUCTS_FILE, []);
-const productStock = new Map(Object.entries(loadJson(STOCK_FILE, {})));
-const saveStock = () => {
-  const obj = {};
-  for (const [k, v] of productStock) obj[k] = v;
-  saveJson(STOCK_FILE, obj);
-};
 
 const syncStockToApi = async (productId, newStock) => {
   try {
@@ -120,9 +113,9 @@ const syncStockToApi = async (productId, newStock) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(putBody),
     }, 5000);
-    console.log(`[stock] Synced product ${productId} stock=${newStock} to .NET API`);
+    console.log(`[stock] Synced product ${productId} stock=${newStock} to SQL`);
   } catch (err) {
-    console.error(`[stock] Failed to sync product ${productId} to .NET API:`, err.message);
+    console.error(`[stock] Failed to sync product ${productId} to SQL:`, err.message);
   }
 };
 
@@ -130,16 +123,9 @@ const deductStock = (items) => {
   for (const item of items) {
     const pid = item.productId || item.id;
     if (!pid) continue;
-    const key = String(pid);
-    const current = productStock.get(key);
     const qty = item.quantity || 1;
-    if (current !== undefined) {
-      const newStock = Math.max(0, current - qty);
-      productStock.set(key, newStock);
-      syncStockToApi(pid, newStock);
-    }
+    syncStockToApi(pid, qty);
   }
-  saveStock();
 };
 
 // Tracks which products have active sale discounts (keyed by .NET API productId)
@@ -161,11 +147,6 @@ app.get('/api/products', async (req, res) => {
           if (productDiscounts.has(pid)) {
             item.originalPrice = productDiscounts.get(pid);
           }
-          const key = String(pid);
-          if (!productStock.has(key)) {
-            productStock.set(key, Number(item.stock ?? item.Stock ?? item.stockQuantity ?? item.StockQuantity ?? 0));
-          }
-          item.stock = productStock.get(key);
         }
       }
       const extra = localProducts.filter(p => !dotNetIds.has(String(p.id)));
@@ -661,15 +642,6 @@ app.put('/api/products/:id', async (req, res) => {
   const idStr = String(req.params.id);
   const updates = req.body || {};
 
-  if (updates.stockQuantity !== undefined || updates.stock !== undefined) {
-    const newStock = Number(updates.stockQuantity ?? updates.stock);
-    if (!isNaN(newStock) && newStock >= 0) {
-      const key = idStr;
-      productStock.set(key, newStock);
-      saveStock();
-    }
-  }
-
   const localIdx = localProducts.findIndex(p => String(p.id) === idStr);
   if (localIdx !== -1) {
     const lp = localProducts[localIdx];
@@ -757,14 +729,6 @@ app.get('/api/orders/:id', async (req, res) => {
       }, 5000);
     if (dotNetRes.ok) {
       const data = await dotNetRes.json();
-      const pid = data.productId ?? data.ProductId ?? data.id ?? data.Id;
-      if (pid != null) {
-        const key = String(pid);
-        if (!productStock.has(key)) {
-          productStock.set(key, Number(data.stock ?? data.Stock ?? data.stockQuantity ?? data.StockQuantity ?? 0));
-        }
-        data.stock = productStock.get(key);
-      }
       return res.json(data);
     }
     } catch {}
