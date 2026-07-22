@@ -8,13 +8,18 @@ import http from 'node:http';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
 const DATA_DIR = path.resolve('data');
+const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 
 const CATEGORIES_FILE = path.join(DATA_DIR, 'categories.json');
 const STOCK_FILE = path.join(DATA_DIR, 'productStock.json');
+const LOCAL_PRODUCTS_FILE = path.join(DATA_DIR, 'localProducts.json');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+app.use('/uploads', express.static(UPLOADS_DIR));
 
 const loadJson = (file, fallback) => {
   try {
@@ -24,6 +29,23 @@ const loadJson = (file, fallback) => {
 };
 const saveJson = (file, data) => {
   fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf-8');
+};
+
+const saveBase64Image = (dataUrl) => {
+  const match = dataUrl.match(/^data:image\/(\w+);base64,(.+)$/);
+  if (!match) return dataUrl;
+  const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
+  const base64 = match[2];
+  const filename = `img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const filePath = path.join(UPLOADS_DIR, filename);
+  fs.writeFileSync(filePath, Buffer.from(base64, 'base64'));
+  return `/uploads/${filename}`;
+};
+
+const normalizeImageUrl = (imageUrl) => {
+  if (!imageUrl || typeof imageUrl !== 'string') return imageUrl || '';
+  if (imageUrl.startsWith('data:')) return saveBase64Image(imageUrl);
+  return imageUrl;
 };
 
 const getUserFromHeader = (req) => {
@@ -77,6 +99,7 @@ const products = [
 const orders = []; // in-memory only for backward-compatible order viewing; no JSON persistence
 
 // Express-managed product stock (persisted to data/productStock.json)
+const localProducts = loadJson(LOCAL_PRODUCTS_FILE, []);
 const productStock = new Map(Object.entries(loadJson(STOCK_FILE, {})));
 const saveStock = () => {
   const obj = {};
@@ -130,12 +153,14 @@ app.get('/api/products', async (req, res) => {
     if (dotNetRes.ok) {
       const data = await dotNetRes.json();
       const raw = Array.isArray(data) ? data : data?.$values ?? data?.data ?? data?.value ?? [];
+      const dotNetIds = new Set();
       for (const item of raw) {
         const pid = item.productId ?? item.ProductId ?? item.id ?? item.Id;
-        if (pid != null && productDiscounts.has(pid)) {
-          item.originalPrice = productDiscounts.get(pid);
-        }
         if (pid != null) {
+          dotNetIds.add(String(pid));
+          if (productDiscounts.has(pid)) {
+            item.originalPrice = productDiscounts.get(pid);
+          }
           const key = String(pid);
           if (!productStock.has(key)) {
             productStock.set(key, Number(item.stock ?? item.Stock ?? item.stockQuantity ?? item.StockQuantity ?? 0));
@@ -143,10 +168,11 @@ app.get('/api/products', async (req, res) => {
           item.stock = productStock.get(key);
         }
       }
-      return res.json(raw);
+      const extra = localProducts.filter(p => !dotNetIds.has(String(p.id)));
+      return res.json([...raw, ...extra]);
     }
   } catch {}
-  res.json(products);
+  res.json([...localProducts, ...products]);
 });
 
 app.get('/api/products/:id', async (req, res) => {
@@ -509,10 +535,67 @@ app.delete('/api/broadcasts/:id', async (req, res) => {
   }
 });
 
-app.post('/api/products', (req, res) => {
+app.post('/api/products', async (req, res) => {
   const product = req.body;
-  if (!product || !product.name || !product.description || !product.image || product.price === undefined || product.stock === undefined) {
+  if (!product || !product.name || !product.description || product.price === undefined || product.stock === undefined) {
     return res.status(400).json({ message: 'Missing required product fields' });
+  }
+
+  const categoryId = product.categoryId || product.category || '';
+  let dotNetCategoryId = undefined;
+  if (categoryId) {
+    try {
+      const catRes = await fetchWithTimeout(`${EXTERNAL_API}/Categories`, { headers: { 'Content-Type': 'application/json' } }, 5000);
+      if (catRes.ok) {
+        const catData = await catRes.json();
+        const catArr = Array.isArray(catData) ? catData : catData?.$values ?? catData?.data ?? catData?.value ?? [];
+        const match = catArr.find(c => (c.categoryName || '').toLowerCase() === String(categoryId).toLowerCase());
+        if (match) dotNetCategoryId = match.categoryId;
+      }
+    } catch {}
+  }
+
+  const rawImage = product.image || product.imageUrl || '';
+  const safeImageUrl = normalizeImageUrl(rawImage);
+
+  const dotNetBody = {
+    name: product.name,
+    description: product.description,
+    price: Number(product.price),
+    stockQuantity: Number(product.stock),
+    imageUrl: safeImageUrl,
+    brand: product.brand || '',
+    sku: product.sku || '',
+    ...(dotNetCategoryId !== undefined ? { categoryId: dotNetCategoryId } : {}),
+  };
+
+  try {
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Products`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(dotNetBody),
+    }, 15000);
+    const text = await dotNetRes.text();
+    if (dotNetRes.ok) {
+      let obj;
+      try { obj = text ? JSON.parse(text) : {}; } catch { obj = null; }
+      const netResult = obj?.data ?? obj?.value ?? obj ?? {};
+      const newId = netResult.productId || netResult.id || Date.now();
+      const savedProduct = {
+        id: newId,
+        name: product.name,
+        description: product.description,
+        price: Number(product.price),
+        stock: Number(product.stock),
+        image: safeImageUrl,
+        category: product.category || 'General',
+        brand: product.brand || '',
+      };
+      return res.status(201).json(savedProduct);
+    }
+    console.error(`[products] .NET API POST returned ${dotNetRes.status}: ${text}`);
+  } catch (err) {
+    console.error(`[products] .NET API POST failed:`, err.message);
   }
 
   const id = Date.now();
@@ -521,8 +604,8 @@ app.post('/api/products', (req, res) => {
     name: product.name,
     description: product.description,
     price: Number(product.price),
-    originalPrice: product.originalPrice !== undefined ? Number(product.originalPrice) : Number(product.price) * 1.25,
-    image: product.image,
+    originalPrice: product.originalPrice !== undefined ? Number(product.originalPrice) : Number(product.price),
+    image: safeImageUrl || '',
     category: product.category || 'General',
     stock: Number(product.stock),
     brand: product.brand || '',
@@ -531,45 +614,87 @@ app.post('/api/products', (req, res) => {
     rating: product.rating || 0,
     reviews: product.reviews || [],
   };
-
-  products.push(newProduct);
+  localProducts.push(newProduct);
+  saveJson(LOCAL_PRODUCTS_FILE, localProducts);
   res.status(201).json(newProduct);
 });
 
 app.patch('/api/products/:id', (req, res) => {
   const productId = Number(req.params.id);
-  const product = products.find((item) => item.id === productId);
-  if (!product) {
-    return res.status(404).json({ message: 'Product not found' });
+  const idStr = String(req.params.id);
+  const updates = req.body || {};
+
+  let product = products.find((item) => item.id === productId);
+  const localIdx = localProducts.findIndex((item) => String(item.id) === idStr);
+
+  if (localIdx !== -1) {
+    const lp = localProducts[localIdx];
+    if (updates.name !== undefined) lp.name = updates.name;
+    if (updates.description !== undefined) lp.description = updates.description;
+    if (updates.price !== undefined) lp.price = Number(updates.price);
+    if (updates.originalPrice !== undefined) lp.originalPrice = Number(updates.originalPrice);
+    if (updates.category !== undefined) lp.category = updates.category;
+    if (updates.brand !== undefined) lp.brand = updates.brand;
+    if (updates.stock !== undefined) lp.stock = Number(updates.stock);
+    if (updates.image !== undefined) lp.image = updates.image;
+    saveJson(LOCAL_PRODUCTS_FILE, localProducts);
+    return res.json(lp);
   }
 
-  const updates = req.body || {};
-  if (updates.name !== undefined) product.name = updates.name;
-  if (updates.description !== undefined) product.description = updates.description;
-  if (updates.price !== undefined) product.price = Number(updates.price);
-  if (updates.originalPrice !== undefined) product.originalPrice = Number(updates.originalPrice);
-  if (updates.category !== undefined) product.category = updates.category;
-  if (updates.brand !== undefined) product.brand = updates.brand;
-  if (updates.stock !== undefined) product.stock = Number(updates.stock);
-  if (updates.image !== undefined) product.image = updates.image;
+  if (product) {
+    if (updates.name !== undefined) product.name = updates.name;
+    if (updates.description !== undefined) product.description = updates.description;
+    if (updates.price !== undefined) product.price = Number(updates.price);
+    if (updates.originalPrice !== undefined) product.originalPrice = Number(updates.originalPrice);
+    if (updates.category !== undefined) product.category = updates.category;
+    if (updates.brand !== undefined) product.brand = updates.brand;
+    if (updates.stock !== undefined) product.stock = Number(updates.stock);
+    if (updates.image !== undefined) product.image = updates.image;
+    return res.json(product);
+  }
 
-  res.json(product);
+  return res.status(404).json({ message: 'Product not found' });
 });
 
 app.put('/api/products/:id', async (req, res) => {
   const productId = Number(req.params.id);
+  const idStr = String(req.params.id);
   const updates = req.body || {};
 
   if (updates.stockQuantity !== undefined || updates.stock !== undefined) {
     const newStock = Number(updates.stockQuantity ?? updates.stock);
     if (!isNaN(newStock) && newStock >= 0) {
-      const key = String(productId);
+      const key = idStr;
       productStock.set(key, newStock);
       saveStock();
     }
   }
 
+  const localIdx = localProducts.findIndex(p => String(p.id) === idStr);
+  if (localIdx !== -1) {
+    const lp = localProducts[localIdx];
+    if (updates.name !== undefined) lp.name = updates.name;
+    if (updates.description !== undefined) lp.description = updates.description;
+    if (updates.price !== undefined) lp.price = Number(updates.price);
+    if (updates.stockQuantity !== undefined || updates.stock !== undefined) lp.stock = Number(updates.stockQuantity ?? updates.stock);
+    if (updates.brand !== undefined) lp.brand = updates.brand;
+  if (updates.imageUrl !== undefined || updates.image !== undefined) {
+    const rawImg = updates.imageUrl || updates.image;
+    const safeImg = normalizeImageUrl(rawImg);
+    lp.image = safeImg;
+    updates.imageUrl = safeImg;
+  }
+    if (updates.category !== undefined) lp.category = updates.category;
+    saveJson(LOCAL_PRODUCTS_FILE, localProducts);
+  }
+
   try {
+    if (updates.imageUrl && updates.imageUrl.startsWith('data:')) {
+      updates.imageUrl = normalizeImageUrl(updates.imageUrl);
+    }
+    if (updates.image && updates.image.startsWith('data:')) {
+      updates.image = normalizeImageUrl(updates.image);
+    }
     const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Products/${productId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -1008,12 +1133,14 @@ app.patch('/api/products/:id/discount', async (req, res) => {
 
 app.delete('/api/products/:id', (req, res) => {
   const productId = Number(req.params.id);
+  const idStr = String(req.params.id);
+  let removed = false;
   const index = products.findIndex((item) => item.id === productId);
-  if (index === -1) {
-    return res.status(404).json({ message: 'Product not found' });
-  }
-  products.splice(index, 1);
-  res.json({ message: 'Product removed successfully' });
+  if (index !== -1) { products.splice(index, 1); removed = true; }
+  const localIndex = localProducts.findIndex((item) => String(item.id) === idStr);
+  if (localIndex !== -1) { localProducts.splice(localIndex, 1); saveJson(LOCAL_PRODUCTS_FILE, localProducts); removed = true; }
+  if (removed) return res.json({ message: 'Product removed successfully' });
+  return res.status(404).json({ message: 'Product not found' });
 });
 // Helper: forward auth request to external API
 const forwardAuth = async (endpoint, body) => {

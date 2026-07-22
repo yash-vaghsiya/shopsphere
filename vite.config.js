@@ -30,6 +30,11 @@ export default defineConfig(() => {
           changeOrigin: true,
           secure: false,
         },
+        '/uploads': {
+          target: `http://localhost:${process.env.API_PORT || 3001}`,
+          changeOrigin: true,
+          secure: false,
+        },
       },
       watch: {
         ignored: ['**/data/**', '**/dist/**'],

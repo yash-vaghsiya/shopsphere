@@ -61,6 +61,22 @@ const CartInit = () => {
   return null;
 };
 
+const CategoriesInit = () => {
+  const dispatch = useDispatch();
+  useEffect(() => {
+    import("./services/api").then(({ axiosInstance }) => {
+      axiosInstance.get("/api/categories").then(res => {
+        if (res.data && Array.isArray(res.data)) {
+          res.data.forEach(c => {
+            if (c.name) dispatch({ type: "products/addCategory", payload: c.name });
+          });
+        }
+      }).catch(() => {});
+    });
+  }, [dispatch]);
+  return null;
+};
+
 export default function App() {
   return (
     <Provider store={store}>
@@ -123,6 +139,7 @@ export default function App() {
             
             {/* Global Hot Notifications Stack */}
             <CartInit />
+            <CategoriesInit />
             <GlobalBroadcastListener />
             <AISphereButler />
             <ProductCompareTray />

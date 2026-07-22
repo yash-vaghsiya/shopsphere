@@ -23,6 +23,7 @@ import {
   Clock, 
   ArrowRight,
   UploadCloud,
+  Plus,
   Cpu,
   MonitorPlay
 } from "lucide-react";
@@ -99,6 +100,7 @@ export const AdminAddProduct = () => {
   const [category, setCategory] = useState(categories[0] || "Electronics");
   const [stock, setStock] = useState("");
   const [loading, setLoading] = useState(false);
+  const fileInputRef = React.useRef(null);
 
   // Assistant Console States
   const [activeAssistantTab, setActiveAssistantTab] = useState("presets");
@@ -214,6 +216,26 @@ export const AdminAddProduct = () => {
     const base64Data = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(rawSvg)));
     setImage(base64Data);
     toast.success("Design converted to offline vector base64 and embedded!");
+  };
+
+  const handleFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please select an image file");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Image must be under 5MB");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setImage(ev.target.result);
+      toast.success("Image uploaded from device!");
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
   };
 
   const handleApplyPreset = (item, itemCategory) => {
@@ -344,12 +366,31 @@ export const AdminAddProduct = () => {
           </div>
 
           <div className="space-y-2">
-            <Input
-              label="Visual Assets Source URL *"
-              value={image}
-              onChange={(e) => setImage(e.target.value)}
-              placeholder="https://images.unsplash.com/..."
-            />
+            <div className="flex gap-2 items-end">
+              <div className="flex-1">
+                <Input
+                  label="Visual Assets Source URL *"
+                  value={image}
+                  onChange={(e) => setImage(e.target.value)}
+                  placeholder="https://images.unsplash.com/..."
+                />
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                title="Upload image from device"
+                className="flex-shrink-0 w-10 h-10 mb-0.5 flex items-center justify-center rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-700 hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 text-gray-400 hover:text-blue-500 transition-all cursor-pointer"
+              >
+                <Plus size={18} />
+              </button>
+            </div>
             
             {image && (
               <div className="p-3 bg-gray-50 dark:bg-gray-950 rounded-xl border border-gray-150 dark:border-gray-850 flex items-center gap-3">

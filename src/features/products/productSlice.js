@@ -191,21 +191,17 @@ export const createProductThunk = createAsyncThunk(
   async (productData, thunkAPI) => {
     try {
       const token = localStorage.getItem("token");
-      const body = {
-        ...productData, stockQuantity: productData.stock, imageUrl: productData.image,
-      };
-      const response = await fetch(`${API_URL}/Products`, {
+      const response = await fetch(`/api/products`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify(body),
+        body: JSON.stringify(productData),
       });
       if (response.ok) {
         const text = await response.text();
         let data;
         try { data = JSON.parse(text); } catch { data = null; }
         if (data) {
-          const obj = data?.data ?? data?.value ?? data;
-          const normalized = normalizeProduct(obj);
+          const normalized = normalizeProduct(data);
           const cat = productData.category || normalized.category || 'General';
           const result = { ...normalized, category: cat, image: normalized.image || productData.image || '' };
           try { const m = JSON.parse(localStorage.getItem('productCategoryMap') || '{}'); m[String(result.id)] = cat; localStorage.setItem('productCategoryMap', JSON.stringify(m)); } catch {}
@@ -218,18 +214,10 @@ export const createProductThunk = createAsyncThunk(
         try { if (productData.name) { const n = JSON.parse(localStorage.getItem('productNameCategoryMap') || '{}'); n[productData.name.trim().toLowerCase()] = cat; localStorage.setItem('productNameCategoryMap', JSON.stringify(n)); } } catch {}
         return { ...productData, category: cat, id: tempId, image: productData.image || '' };
       }
-    } catch {}
-    try {
-      const response = await axiosInstance.post("/api/products", productData);
-      const result = normalizeProduct(response.data);
-      const cat = result.category || productData.category || 'General';
-      try { const m = JSON.parse(localStorage.getItem('productCategoryMap') || '{}'); m[String(result.id)] = cat; localStorage.setItem('productCategoryMap', JSON.stringify(m)); } catch {}
-      try { if (productData.name) { const n = JSON.parse(localStorage.getItem('productNameCategoryMap') || '{}'); n[productData.name.trim().toLowerCase()] = cat; localStorage.setItem('productNameCategoryMap', JSON.stringify(n)); } } catch {}
-      return result;
+      const errData = await response.json().catch(() => ({}));
+      return thunkAPI.rejectWithValue(errData.message || `Server error ${response.status}`);
     } catch (error) {
-      return thunkAPI.rejectWithValue(
-        error.response?.data?.message || "Failed to add product"
-      );
+      return thunkAPI.rejectWithValue(error.message || "Failed to add product");
     }
   }
 );
