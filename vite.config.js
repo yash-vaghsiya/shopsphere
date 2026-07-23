@@ -24,6 +24,7 @@ export default defineConfig(() => {
       },
     },
     server: {
+      host: 'localhost',
       proxy: {
         '/api': {
           target: `http://localhost:${process.env.API_PORT || 3001}`,
@@ -35,6 +36,12 @@ export default defineConfig(() => {
           changeOrigin: true,
           secure: false,
         },
+      },
+      hmr: {
+        protocol: 'ws',
+        host: 'localhost',
+        port: 5173,
+        clientPort: 5173,
       },
       watch: {
         ignored: ['**/data/**', '**/dist/**'],

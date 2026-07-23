@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { AppDispatch, RootState } from "../../app/store";
 import { fetchProductsThunk, deleteProductThunk } from "../../features/products/productSlice";
 import { ProductsTable } from "../../components/admin/AdminComponents";
 import { toast } from "react-hot-toast";
-import { X, Save, Sparkles, AlertCircle } from "lucide-react";
+import { X, Save, Sparkles, AlertCircle, Plus, Play } from "lucide-react";
 
 export const AdminProducts = () => {
   const dispatch = useDispatch();
@@ -19,7 +19,11 @@ export const AdminProducts = () => {
   const [editBrand, setEditBrand] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editImage, setEditImage] = useState("");
+  const [editImages, setEditImages] = useState([]);
+  const [editVideoUrl, setEditVideoUrl] = useState("");
   const [saving, setSaving] = useState(false);
+  const editFileInputRef = useRef(null);
+  const editVideoInputRef = useRef(null);
 
   useEffect(() => {
     dispatch(fetchProductsThunk({}));
@@ -45,6 +49,36 @@ export const AdminProducts = () => {
     setEditBrand(prod.brand || "");
     setEditDescription(prod.description || "");
     setEditImage(prod.image || "");
+    setEditImages(prod.images && prod.images.length > 0 ? [...prod.images] : (prod.image ? [prod.image] : []));
+    setEditVideoUrl(prod.videoUrl || "");
+  };
+
+  const handleEditFileUpload = (e) => {
+    const files = Array.from(e.target.files || []);
+    files.forEach(file => {
+      if (!file.type.startsWith("image/")) return;
+      if (file.size > 10 * 1024 * 1024) { toast.error("Image must be under 10MB"); return; }
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        setEditImages(prev => [...prev, ev.target.result]);
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = "";
+  };
+
+  const handleEditVideoUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("video/")) { toast.error("Please select a video file"); return; }
+    if (file.size > 50 * 1024 * 1024) { toast.error("Video must be under 50MB"); return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setEditVideoUrl(ev.target.result);
+      toast.success("Video uploaded!");
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
   };
 
   const handleUpdate = async (e) => {
@@ -66,6 +100,42 @@ export const AdminProducts = () => {
 
     try {
       setSaving(true);
+
+      const uploadFile = async (base64Data) => {
+        const r = await fetch('/api/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file: base64Data }),
+        });
+        if (!r.ok) throw new Error('File upload failed');
+        return (await r.json()).url;
+      };
+
+      const resolveMediaUrls = async (items) => {
+        const out = [];
+        for (const item of items) {
+          if (!item || typeof item !== 'string') continue;
+          if (item.startsWith('http://') || item.startsWith('https://') || item.startsWith('/uploads/')) {
+            out.push(item);
+          } else {
+            out.push(await uploadFile(item));
+          }
+        }
+        return out;
+      };
+
+      toast.loading("Uploading media files...", { id: 'edit-upload' });
+      const resolvedImages = await resolveMediaUrls(editImages);
+      let resolvedVideo = "";
+      if (editVideoUrl) {
+        if (editVideoUrl.startsWith('http://') || editVideoUrl.startsWith('https://') || editVideoUrl.startsWith('/uploads/')) {
+          resolvedVideo = editVideoUrl;
+        } else {
+          resolvedVideo = await uploadFile(editVideoUrl);
+        }
+      }
+      toast.dismiss('edit-upload');
+
       const API_URL = import.meta.env.VITE_API_URL || "https://localhost:7015/api";
       const body = {
         name: editName.trim(),
@@ -74,7 +144,9 @@ export const AdminProducts = () => {
         category: editCategory.trim(),
         brand: editBrand.trim(),
         description: editDescription.trim(),
-        image: editImage.trim() || undefined,
+        image: (resolvedImages.length > 0 ? resolvedImages[0] : editImage.trim()) || undefined,
+        images: resolvedImages,
+        videoUrl: resolvedVideo,
       };
 
       let dotNetCategoryId = undefined;
@@ -94,7 +166,9 @@ export const AdminProducts = () => {
         price: parsedPrice,
         brand: editBrand.trim(),
         description: editDescription.trim(),
-        imageUrl: editImage.trim() || undefined,
+        imageUrl: (resolvedImages.length > 0 ? resolvedImages[0] : editImage.trim()) || undefined,
+        images: resolvedImages,
+        videoUrl: resolvedVideo,
         ...(dotNetCategoryId !== undefined ? { categoryId: dotNetCategoryId } : {}),
       };
 
@@ -265,16 +339,83 @@ export const AdminProducts = () => {
                 </div>
               </div>
 
-              {/* Image URL Input Box */}
+              {/* Image Assets */}
               <div className="space-y-1">
-                <label className="text-[10px] uppercase font-black text-gray-400 tracking-wide">Display Image URL</label>
-                <input
-                  type="text"
-                  value={editImage}
-                  onChange={(e) => setEditImage(e.target.value)}
-                  placeholder="https://example.com/item.png"
-                  className="w-full bg-gray-55 dark:bg-gray-990 border border-gray-200 dark:border-gray-750 focus:border-blue-500 focus:outline-none rounded-lg px-3 py-2 text-xs text-gray-900 dark:text-white transition-colors font-mono"
-                />
+                <label className="text-[10px] uppercase font-black text-gray-400 tracking-wide">
+                  Product Images ({editImages.length})
+                </label>
+                <div className="flex gap-2 items-end">
+                  <input
+                    type="text"
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value.trim()) {
+                        setEditImages(prev => [...prev, e.target.value.trim()]);
+                        e.target.value = "";
+                      }
+                    }}
+                    placeholder="Add image URL and press Enter"
+                    className="flex-1 bg-gray-55 dark:bg-gray-990 border border-gray-200 dark:border-gray-750 focus:border-blue-500 focus:outline-none rounded-lg px-3 py-2 text-xs text-gray-900 dark:text-white transition-colors font-mono"
+                  />
+                  <input ref={editFileInputRef} type="file" accept="image/*" multiple onChange={handleEditFileUpload} className="hidden" />
+                  <button
+                    type="button"
+                    onClick={() => editFileInputRef.current?.click()}
+                    className="flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-700 hover:border-blue-500 text-gray-400 hover:text-blue-500 transition-all cursor-pointer"
+                  >
+                    <Plus size={16} />
+                  </button>
+                </div>
+                {editImages.length > 0 && (
+                  <div className="grid grid-cols-4 gap-2 mt-2">
+                    {editImages.map((img, idx) => (
+                      <div key={idx} className="relative aspect-square rounded-lg overflow-hidden border bg-white dark:bg-gray-800 flex items-center justify-center group">
+                        <img src={img} alt={`Asset ${idx + 1}`} className="w-full h-full object-contain" />
+                        <button
+                          type="button"
+                          onClick={() => setEditImages(prev => prev.filter((_, i) => i !== idx))}
+                          className="absolute top-0.5 right-0.5 w-5 h-5 bg-red-500 text-white rounded-full text-[10px] font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                        >
+                          ✕
+                        </button>
+                        {idx === 0 && (
+                          <span className="absolute bottom-0 left-0 right-0 bg-blue-600/90 text-white text-[7px] font-bold text-center py-0.5">Primary</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Video URL */}
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-black text-gray-400 tracking-wide">Product Video (optional)</label>
+                <div className="flex gap-2 items-end">
+                  <input
+                    type="text"
+                    value={editVideoUrl && !editVideoUrl.startsWith('data:') ? editVideoUrl : ''}
+                    onChange={(e) => setEditVideoUrl(e.target.value)}
+                    placeholder="https://example.com/video.mp4"
+                    className="flex-1 bg-gray-55 dark:bg-gray-990 border border-gray-200 dark:border-gray-750 focus:border-blue-500 focus:outline-none rounded-lg px-3 py-2 text-xs text-gray-900 dark:text-white transition-colors font-mono"
+                  />
+                  <input ref={editVideoInputRef} type="file" accept="video/*" onChange={handleEditVideoUpload} className="hidden" />
+                  <button
+                    type="button"
+                    onClick={() => editVideoInputRef.current?.click()}
+                    className="flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-700 hover:border-purple-500 text-gray-400 hover:text-purple-500 transition-all cursor-pointer"
+                  >
+                    <Play size={16} />
+                  </button>
+                </div>
+                {editVideoUrl && (
+                  <div className="flex items-center gap-2 mt-1.5 p-2 bg-gray-50 dark:bg-gray-950 rounded-lg border text-[10px]">
+                    <Play size={12} className="text-purple-500" />
+                    <span className="truncate flex-1 font-mono text-gray-600 dark:text-gray-300">
+                      {editVideoUrl.startsWith('data:') ? 'Uploaded video file' : editVideoUrl}
+                    </span>
+                    <button type="button" onClick={() => setEditVideoUrl("")} className="text-red-400 hover:text-red-600 font-bold cursor-pointer">Remove</button>
+                  </div>
+                )}
               </div>
 
               {/* Product Specifications Description */}

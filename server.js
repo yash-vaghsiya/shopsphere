@@ -5,6 +5,7 @@ import path from 'path';
 import fs from 'fs';
 import https from 'node:https';
 import http from 'node:http';
+import { dbEnsureTables, dbGetProductImages, dbSetProductImages, dbGetProductVideo, dbSetProductVideo, dbGetAllMedia } from './db.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -15,6 +16,7 @@ const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 
 const CATEGORIES_FILE = path.join(DATA_DIR, 'categories.json');
 const LOCAL_PRODUCTS_FILE = path.join(DATA_DIR, 'localProducts.json');
+
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
@@ -43,8 +45,37 @@ const saveBase64Image = (dataUrl) => {
 
 const normalizeImageUrl = (imageUrl) => {
   if (!imageUrl || typeof imageUrl !== 'string') return imageUrl || '';
-  if (imageUrl.startsWith('data:')) return saveBase64Image(imageUrl);
+  if (imageUrl.startsWith('data:image/')) return saveBase64Image(imageUrl);
   return imageUrl;
+};
+
+const saveBase64Video = (dataUrl) => {
+  const match = dataUrl.match(/^data:video\/(\w+);base64,(.+)$/);
+  if (!match) return dataUrl;
+  const ext = match[1] === 'quicktime' ? 'mov' : match[1];
+  const base64 = match[2];
+  const filename = `vid_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const filePath = path.join(UPLOADS_DIR, filename);
+  fs.writeFileSync(filePath, Buffer.from(base64, 'base64'));
+  return `/uploads/${filename}`;
+};
+
+const normalizeMediaUrl = (url) => {
+  if (!url || typeof url !== 'string') return url || '';
+  if (url.startsWith('data:image/')) return saveBase64Image(url);
+  if (url.startsWith('data:video/')) return saveBase64Video(url);
+  return url;
+};
+
+const normalizeMediaArray = (arr) => {
+  if (!Array.isArray(arr)) return [];
+  return arr.map(item => {
+    if (typeof item === 'string') return normalizeMediaUrl(item);
+    if (item && typeof item === 'object') {
+      return { ...item, url: normalizeMediaUrl(item.url || item.src || '') };
+    }
+    return item;
+  }).filter(Boolean);
 };
 
 const getUserFromHeader = (req) => {
@@ -100,6 +131,10 @@ const orders = []; // in-memory only for backward-compatible order viewing; no J
 // Express-managed product stock (synced directly to SQL server)
 const localProducts = loadJson(LOCAL_PRODUCTS_FILE, []);
 
+
+
+
+
 const syncStockToApi = async (productId, newStock) => {
   try {
     const getRes = await fetchWithTimeout(`${EXTERNAL_API}/Products/${productId}`, {
@@ -132,6 +167,18 @@ const deductStock = (items) => {
 const productDiscounts = new Map();
 
 app.get('/api/products', async (req, res) => {
+  const dbMedia = dbGetAllMedia();
+
+  const overlayMedia = (items) => {
+    return items.map(item => {
+      const pid = String(item.productId ?? item.ProductId ?? item.id ?? item.Id);
+      const media = dbMedia[pid];
+      if (media) {
+        return { ...item, images: media.images || [], videoUrl: media.videoUrl || '' };
+      }
+      return item;
+    });
+  };
   try {
     const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Products`, {
       headers: { 'Content-Type': 'application/json' },
@@ -150,19 +197,26 @@ app.get('/api/products', async (req, res) => {
         }
       }
       const extra = localProducts.filter(p => !dotNetIds.has(String(p.id)));
-      return res.json([...raw, ...extra]);
+      return res.json(overlayMedia([...raw, ...extra]));
     }
   } catch {}
-  res.json([...localProducts, ...products]);
+  res.json(overlayMedia([...localProducts, ...products]));
 });
 
 app.get('/api/products/:id', async (req, res) => {
+  const pid = req.params.id;
   try {
-    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Products/${req.params.id}`, {
+    const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Products/${pid}`, {
       headers: { 'Content-Type': 'application/json' },
     }, 5000);
     if (dotNetRes.ok) {
       const data = await dotNetRes.json();
+      const images = await dbGetProductImages(Number(pid));
+      data.images = images.map(i => i.ImageUrl);
+      data.videoUrl = await dbGetProductVideo(Number(pid));
+      if ((!data.images || data.images.length === 0) && data.imageUrl) {
+        data.images = [data.imageUrl];
+      }
       return res.json(data);
     }
   } catch {}
@@ -539,12 +593,19 @@ app.post('/api/products', async (req, res) => {
   const rawImage = product.image || product.imageUrl || '';
   const safeImageUrl = normalizeImageUrl(rawImage);
 
+  const rawImages = Array.isArray(product.images) ? product.images : [];
+  const safeImages = rawImages.map(u => normalizeMediaUrl(u)).filter(Boolean);
+  if (safeImages.length === 0 && safeImageUrl) safeImages.push(safeImageUrl);
+
+  const rawVideo = product.videoUrl || product.video || '';
+  const safeVideoUrl = normalizeMediaUrl(rawVideo);
+
   const dotNetBody = {
     name: product.name,
     description: product.description,
     price: Number(product.price),
     stockQuantity: Number(product.stock),
-    imageUrl: safeImageUrl,
+    imageUrl: safeImages[0] || safeImageUrl,
     brand: product.brand || '',
     sku: product.sku || '',
     ...(dotNetCategoryId !== undefined ? { categoryId: dotNetCategoryId } : {}),
@@ -558,17 +619,59 @@ app.post('/api/products', async (req, res) => {
     }, 15000);
     const text = await dotNetRes.text();
     if (dotNetRes.ok) {
-      let obj;
-      try { obj = text ? JSON.parse(text) : {}; } catch { obj = null; }
-      const netResult = obj?.data ?? obj?.value ?? obj ?? {};
-      const newId = netResult.productId || netResult.id || Date.now();
+      let newId = null;
+      try { const obj = text ? JSON.parse(text) : {}; newId = obj?.productId ?? obj?.id ?? obj?.data?.productId ?? obj?.value?.productId; } catch {}
+      if (!newId) {
+        try {
+          const listRes = await fetchWithTimeout(`${EXTERNAL_API}/Products`, { headers: { 'Content-Type': 'application/json' } }, 5000);
+          if (listRes.ok) {
+            const listData = await listRes.json();
+            const list = Array.isArray(listData) ? listData : listData?.$values ?? listData?.data ?? listData?.value ?? [];
+            const match = list.find(p => (p.name || '').toLowerCase() === product.name.toLowerCase() && Number(p.price) === Number(product.price));
+            if (match) newId = match.productId ?? match.id ?? null;
+          }
+        } catch {}
+      }
+      if (!newId) {
+        try {
+          const listRes2 = await fetchWithTimeout(`${EXTERNAL_API}/Products`, { headers: { 'Content-Type': 'application/json' } }, 5000);
+          if (listRes2.ok) {
+            const listData2 = await listRes2.json();
+            const list2 = Array.isArray(listData2) ? listData2 : listData2?.$values ?? listData2?.data ?? listData2?.value ?? [];
+            const byName = list2.filter(p => (p.name || '').toLowerCase() === product.name.toLowerCase());
+            if (byName.length > 0) {
+              const best = byName.sort((a, b) => (b.productId ?? b.id ?? 0) - (a.productId ?? a.id ?? 0))[0];
+              newId = best.productId ?? best.id ?? null;
+            }
+          }
+        } catch {}
+      }
+      if (!newId) {
+        try {
+          const listRes3 = await fetchWithTimeout(`${EXTERNAL_API}/Products`, { headers: { 'Content-Type': 'application/json' } }, 5000);
+          if (listRes3.ok) {
+            const listData3 = await listRes3.json();
+            const list3 = Array.isArray(listData3) ? listData3 : listData3?.$values ?? listData3?.data ?? listData3?.value ?? [];
+            const maxId = list3.reduce((max, p) => Math.max(max, Number(p.productId ?? p.id ?? 0)), 0);
+            if (maxId > 0) newId = maxId;
+          }
+        } catch {}
+      }
+      if (!newId) newId = Date.now();
+      console.log(`[products] Created product ${newId} — saving ${safeImages.length} images and video to DB`);
+      if (safeImages.length > 0 || safeVideoUrl) {
+        await dbSetProductImages(Number(newId), safeImages);
+        await dbSetProductVideo(Number(newId), safeVideoUrl);
+      }
       const savedProduct = {
         id: newId,
         name: product.name,
         description: product.description,
         price: Number(product.price),
         stock: Number(product.stock),
-        image: safeImageUrl,
+        image: safeImages[0] || safeImageUrl,
+        images: safeImages,
+        videoUrl: safeVideoUrl,
         category: product.category || 'General',
         brand: product.brand || '',
       };
@@ -586,7 +689,9 @@ app.post('/api/products', async (req, res) => {
     description: product.description,
     price: Number(product.price),
     originalPrice: product.originalPrice !== undefined ? Number(product.originalPrice) : Number(product.price),
-    image: safeImageUrl || '',
+    image: safeImages[0] || safeImageUrl || '',
+    images: safeImages,
+    videoUrl: safeVideoUrl,
     category: product.category || 'General',
     stock: Number(product.stock),
     brand: product.brand || '',
@@ -595,12 +700,16 @@ app.post('/api/products', async (req, res) => {
     rating: product.rating || 0,
     reviews: product.reviews || [],
   };
+  if (safeImages.length > 0 || safeVideoUrl) {
+    dbSetProductImages(Number(id), safeImages);
+    dbSetProductVideo(Number(id), safeVideoUrl);
+  }
   localProducts.push(newProduct);
   saveJson(LOCAL_PRODUCTS_FILE, localProducts);
   res.status(201).json(newProduct);
 });
 
-app.patch('/api/products/:id', (req, res) => {
+app.patch('/api/products/:id', async (req, res) => {
   const productId = Number(req.params.id);
   const idStr = String(req.params.id);
   const updates = req.body || {};
@@ -618,6 +727,13 @@ app.patch('/api/products/:id', (req, res) => {
     if (updates.brand !== undefined) lp.brand = updates.brand;
     if (updates.stock !== undefined) lp.stock = Number(updates.stock);
     if (updates.image !== undefined) lp.image = updates.image;
+    if (Array.isArray(updates.images)) {
+      const safeImages = updates.images.map(u => normalizeMediaUrl(u)).filter(Boolean);
+      await dbSetProductImages(productId, safeImages);
+    }
+    if (updates.videoUrl !== undefined) {
+      await dbSetProductVideo(productId, normalizeMediaUrl(updates.videoUrl));
+    }
     saveJson(LOCAL_PRODUCTS_FILE, localProducts);
     return res.json(lp);
   }
@@ -631,6 +747,13 @@ app.patch('/api/products/:id', (req, res) => {
     if (updates.brand !== undefined) product.brand = updates.brand;
     if (updates.stock !== undefined) product.stock = Number(updates.stock);
     if (updates.image !== undefined) product.image = updates.image;
+    if (Array.isArray(updates.images)) {
+      const safeImages = updates.images.map(u => normalizeMediaUrl(u)).filter(Boolean);
+      await dbSetProductImages(productId, safeImages);
+    }
+    if (updates.videoUrl !== undefined) {
+      await dbSetProductVideo(productId, normalizeMediaUrl(updates.videoUrl));
+    }
     return res.json(product);
   }
 
@@ -650,14 +773,22 @@ app.put('/api/products/:id', async (req, res) => {
     if (updates.price !== undefined) lp.price = Number(updates.price);
     if (updates.stockQuantity !== undefined || updates.stock !== undefined) lp.stock = Number(updates.stockQuantity ?? updates.stock);
     if (updates.brand !== undefined) lp.brand = updates.brand;
-  if (updates.imageUrl !== undefined || updates.image !== undefined) {
-    const rawImg = updates.imageUrl || updates.image;
-    const safeImg = normalizeImageUrl(rawImg);
-    lp.image = safeImg;
-    updates.imageUrl = safeImg;
-  }
+    if (updates.imageUrl !== undefined || updates.image !== undefined) {
+      const rawImg = updates.imageUrl || updates.image;
+      const safeImg = normalizeImageUrl(rawImg);
+      lp.image = safeImg;
+      updates.imageUrl = safeImg;
+    }
     if (updates.category !== undefined) lp.category = updates.category;
     saveJson(LOCAL_PRODUCTS_FILE, localProducts);
+  }
+
+  if (Array.isArray(updates.images)) {
+    const safeImages = updates.images.map(u => normalizeMediaUrl(u)).filter(Boolean);
+    await dbSetProductImages(productId, safeImages);
+  }
+  if (updates.videoUrl !== undefined) {
+    await dbSetProductVideo(productId, normalizeMediaUrl(updates.videoUrl));
   }
 
   try {
@@ -667,10 +798,11 @@ app.put('/api/products/:id', async (req, res) => {
     if (updates.image && updates.image.startsWith('data:')) {
       updates.image = normalizeImageUrl(updates.image);
     }
+    const { images: _images, videoUrl: _video, ...dotNetUpdates } = updates;
     const dotNetRes = await fetchWithTimeout(`${EXTERNAL_API}/Products/${productId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...updates, productId }),
+      body: JSON.stringify({ ...dotNetUpdates, productId }),
     }, 10000);
     if (dotNetRes.ok) {
       const text = await dotNetRes.text();
@@ -1622,6 +1754,22 @@ app.use((err, req, res, next) => {
   }
 });
 
+app.post('/api/upload', (req, res) => {
+  const { file, filename } = req.body || {};
+  if (!file || typeof file !== 'string') {
+    return res.status(400).json({ message: 'No file data provided' });
+  }
+  let savedUrl;
+  if (file.startsWith('data:image/')) {
+    savedUrl = saveBase64Image(file);
+  } else if (file.startsWith('data:video/')) {
+    savedUrl = saveBase64Video(file);
+  } else {
+    return res.status(400).json({ message: 'Unsupported file type. Send data:image/* or data:video/* base64.' });
+  }
+  res.json({ url: savedUrl });
+});
+
 app.get('*', (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
@@ -1632,4 +1780,5 @@ app.get('*', (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Project started! Open http://localhost:${PORT} to view it.`);
   console.log(`   .NET API target: ${EXTERNAL_API}`);
+  dbEnsureTables();
 });

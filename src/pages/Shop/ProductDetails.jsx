@@ -93,6 +93,7 @@ export const ProductDetails = () => {
           <ProductGallery
             images={currentProduct.images}
             defaultImage={currentProduct.image}
+            videoUrl={currentProduct.videoUrl}
           />
 
           {/* Specifications Box Panel */}

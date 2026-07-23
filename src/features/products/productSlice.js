@@ -38,13 +38,24 @@ const extractImage = (p) => {
 const normalizeProduct = (p) => {
   const id = p.id ?? p.Id ?? p.ProductId ?? p.ID ?? p.productId ?? Date.now() + Math.random();
   const image = extractImage(p);
-  if (typeof image !== 'string') return { id, name: p.name ?? p.Name ?? '', image: '', price: 0, stock: 0, category: 'General', description: '', brand: '', featured: false, trending: false, rating: 0, reviews: [], originalPrice: 0, createdAt: '' };
+
+  const rawImages = p.images ?? p.Images ?? [];
+  const images = Array.isArray(rawImages)
+    ? rawImages.map(i => typeof i === 'string' ? i : i?.url ?? i?.src ?? i?.path ?? '').filter(Boolean)
+    : [];
+  if (images.length === 0 && typeof image === 'string' && image) images.push(image);
+
+  const videoUrl = p.videoUrl ?? p.video ?? p.VideoUrl ?? p.Video ?? p.productVideo ?? '';
+
+  if (typeof image !== 'string') return { id, name: p.name ?? p.Name ?? '', image: '', images: [], videoUrl: '', price: 0, stock: 0, category: 'General', description: '', brand: '', featured: false, trending: false, rating: 0, reviews: [], originalPrice: 0, createdAt: '' };
   return {
     id,
     name: p.name ?? p.Name ?? p.Title ?? p.productName ?? p.ProductName ?? '',
     description: p.description ?? p.Description ?? p.Desc ?? p.desc ?? '',
     price: p.price ?? p.Price ?? p.unitPrice ?? p.UnitPrice ?? 0,
     image,
+    images,
+    videoUrl,
     category: p.category ?? p.Category ?? p.cat ?? p.Cat ?? 'General',
     categoryId: p.categoryId ?? p.CategoryId ?? null,
     stock: p.stock ?? p.Stock ?? p.stockQuantity ?? p.StockQuantity ?? p.quantity ?? p.Quantity ?? 0,
@@ -203,7 +214,9 @@ export const createProductThunk = createAsyncThunk(
         if (data) {
           const normalized = normalizeProduct(data);
           const cat = productData.category || normalized.category || 'General';
-          const result = { ...normalized, category: cat, image: normalized.image || productData.image || '' };
+          const imgs = productData.images && productData.images.length > 0 ? productData.images : normalized.images;
+          const vid = productData.videoUrl || normalized.videoUrl || '';
+          const result = { ...normalized, category: cat, image: normalized.image || productData.image || '', images: imgs, videoUrl: vid };
           try { const m = JSON.parse(localStorage.getItem('productCategoryMap') || '{}'); m[String(result.id)] = cat; localStorage.setItem('productCategoryMap', JSON.stringify(m)); } catch {}
           try { if (productData.name) { const n = JSON.parse(localStorage.getItem('productNameCategoryMap') || '{}'); n[productData.name.trim().toLowerCase()] = cat; localStorage.setItem('productNameCategoryMap', JSON.stringify(n)); } } catch {}
           return result;
@@ -212,7 +225,7 @@ export const createProductThunk = createAsyncThunk(
         const cat = productData.category || 'General';
         try { const m = JSON.parse(localStorage.getItem('productCategoryMap') || '{}'); m[String(tempId)] = cat; localStorage.setItem('productCategoryMap', JSON.stringify(m)); } catch {}
         try { if (productData.name) { const n = JSON.parse(localStorage.getItem('productNameCategoryMap') || '{}'); n[productData.name.trim().toLowerCase()] = cat; localStorage.setItem('productNameCategoryMap', JSON.stringify(n)); } } catch {}
-        return { ...productData, category: cat, id: tempId, image: productData.image || '' };
+        return { ...productData, category: cat, id: tempId, image: productData.image || '', images: productData.images || [], videoUrl: productData.videoUrl || '' };
       }
       const errData = await response.json().catch(() => ({}));
       return thunkAPI.rejectWithValue(errData.message || `Server error ${response.status}`);

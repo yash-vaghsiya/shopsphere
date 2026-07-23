@@ -25,7 +25,8 @@ import {
   UploadCloud,
   Plus,
   Cpu,
-  MonitorPlay
+  MonitorPlay,
+  Play
 } from "lucide-react";
 
 const API_URL = import.meta.env.VITE_API_URL || "https://localhost:7015/api";
@@ -96,11 +97,13 @@ export const AdminAddProduct = () => {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState("");
-  const [image, setImage] = useState("");
+  const [images, setImages] = useState([]);
+  const [videoUrl, setVideoUrl] = useState("");
   const [category, setCategory] = useState(categories[0] || "Electronics");
   const [stock, setStock] = useState("");
   const [loading, setLoading] = useState(false);
   const fileInputRef = React.useRef(null);
+  const videoInputRef = React.useRef(null);
 
   // Assistant Console States
   const [activeAssistantTab, setActiveAssistantTab] = useState("presets");
@@ -214,35 +217,68 @@ export const AdminAddProduct = () => {
   const applyCustomSvgDesign = () => {
     const rawSvg = generateSvg();
     const base64Data = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(rawSvg)));
-    setImage(base64Data);
+    setImages(prev => [base64Data, ...prev.filter(u => u !== base64Data)]);
     toast.success("Design converted to offline vector base64 and embedded!");
   };
 
   const handleFileUpload = (e) => {
+    const files = Array.from(e.target.files || []);
+    const validFiles = files.filter(file => {
+      if (!file.type.startsWith("image/")) {
+        toast.error("Please select image files only");
+        return false;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        toast.error("Each image must be under 10MB");
+        return false;
+      }
+      return true;
+    });
+    if (validFiles.length === 0) return;
+
+    validFiles.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        setImages(prev => [...prev, ev.target.result]);
+      };
+      reader.readAsDataURL(file);
+    });
+    if (validFiles.length > 0) {
+      toast.success(`${validFiles.length} image(s) uploaded from device!`);
+    }
+    e.target.value = "";
+  };
+
+  const handleVideoUpload = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      toast.error("Please select an image file");
+    if (!file.type.startsWith("video/")) {
+      toast.error("Please select a video file");
       return;
     }
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error("Image must be under 5MB");
+    if (file.size > 50 * 1024 * 1024) {
+      toast.error("Video must be under 50MB");
       return;
     }
     const reader = new FileReader();
     reader.onload = (ev) => {
-      setImage(ev.target.result);
-      toast.success("Image uploaded from device!");
+      setVideoUrl(ev.target.result);
+      toast.success("Video uploaded from device!");
     };
     reader.readAsDataURL(file);
     e.target.value = "";
+  };
+
+  const removeImage = (idx) => {
+    setImages(prev => prev.filter((_, i) => i !== idx));
   };
 
   const handleApplyPreset = (item, itemCategory) => {
     setName(item.name);
     setPrice(item.price.toString());
     setDescription(item.desc);
-    setImage(item.image);
+    setImages([item.image]);
+    setVideoUrl("");
     setCategory(itemCategory);
     if (!stock) setStock("50");
     toast.success(`Standard metadata imported for ${item.name}!`, {
@@ -250,10 +286,22 @@ export const AdminAddProduct = () => {
     });
   };
 
+  const uploadFile = async (base64Data) => {
+    const res = await fetch('/api/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: base64Data }),
+    });
+    if (!res.ok) throw new Error('File upload failed');
+    const data = await res.json();
+    return data.url;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!name.trim() || !description.trim() || !price || !image || !stock) {
-      toast.error("Please fill in all product specifications!");
+    const primaryImage = images.length > 0 ? images[0] : "";
+    if (!name.trim() || !description.trim() || !price || !primaryImage || !stock) {
+      toast.error("Please fill in all product specifications (at least one image required)!");
       return;
     }
 
@@ -274,11 +322,38 @@ export const AdminAddProduct = () => {
         return;
       }
 
+      toast.loading("Uploading media files...", { id: 'upload' });
+
+      const uploadedUrls = [];
+      for (let i = 0; i < images.length; i++) {
+        const img = images[i];
+        if (img.startsWith('http://') || img.startsWith('https://') || img.startsWith('/uploads/')) {
+          uploadedUrls.push(img);
+        } else {
+          const url = await uploadFile(img);
+          uploadedUrls.push(url);
+        }
+      }
+
+      let uploadedVideoUrl = "";
+      if (videoUrl) {
+        if (videoUrl.startsWith('http://') || videoUrl.startsWith('https://') || videoUrl.startsWith('/uploads/')) {
+          uploadedVideoUrl = videoUrl;
+        } else {
+          uploadedVideoUrl = await uploadFile(videoUrl);
+        }
+      }
+
+      toast.dismiss('upload');
+      toast.success("All files uploaded!", { duration: 1500 });
+
       const productData = {
         name: name.trim(),
         description: description.trim(),
         price: parsedPrice,
-        image: image.trim(),
+        image: uploadedUrls[0] || '',
+        images: uploadedUrls,
+        videoUrl: uploadedVideoUrl,
         category,
         stock: parsedStock,
       };
@@ -288,6 +363,7 @@ export const AdminAddProduct = () => {
       toast.success("New product initialized in stock successfully!");
       navigate("/admin/products");
     } catch (err) {
+      toast.dismiss('upload');
       toast.error(err || "Failed to catalog product");
     } finally {
       setLoading(false);
@@ -366,12 +442,22 @@ export const AdminAddProduct = () => {
           </div>
 
           <div className="space-y-2">
+            <label className="block text-[11px] font-black uppercase text-gray-400 tracking-wider mb-2">
+              Visual Assets ({images.length} image{images.length !== 1 ? 's' : ''}) *
+            </label>
+
+            {/* Image URL input */}
             <div className="flex gap-2 items-end">
               <div className="flex-1">
                 <Input
-                  label="Visual Assets Source URL *"
-                  value={image}
-                  onChange={(e) => setImage(e.target.value)}
+                  label="Add Image URL"
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value.trim()) {
+                      setImages(prev => [...prev, e.target.value.trim()]);
+                      e.target.value = "";
+                    }
+                  }}
                   placeholder="https://images.unsplash.com/..."
                 />
               </div>
@@ -379,30 +465,92 @@ export const AdminAddProduct = () => {
                 ref={fileInputRef}
                 type="file"
                 accept="image/*"
+                multiple
                 onChange={handleFileUpload}
                 className="hidden"
               />
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                title="Upload image from device"
+                title="Upload images from device (multi-select)"
                 className="flex-shrink-0 w-10 h-10 mb-0.5 flex items-center justify-center rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-700 hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 text-gray-400 hover:text-blue-500 transition-all cursor-pointer"
               >
                 <Plus size={18} />
               </button>
             </div>
-            
-            {image && (
-              <div className="p-3 bg-gray-50 dark:bg-gray-950 rounded-xl border border-gray-150 dark:border-gray-850 flex items-center gap-3">
-                <div className="w-12 h-12 rounded-lg overflow-hidden border bg-white flex-shrink-0 flex items-center justify-center">
-                  <img src={image} alt="Thumbnail preview" className="w-full h-full object-contain" />
-                </div>
-                <div className="space-y-0.5 truncate flex-1 text-[10px]">
-                  <span className="text-gray-400 block font-bold uppercase tracking-wider">Active Embedded Asset</span>
-                  <p className="text-gray-650 dark:text-gray-300 font-mono truncate">{image}</p>
-                </div>
+
+            {/* Uploaded images grid */}
+            {images.length > 0 && (
+              <div className="grid grid-cols-4 gap-2 p-3 bg-gray-50 dark:bg-gray-950 rounded-xl border border-gray-150 dark:border-gray-850">
+                {images.map((img, idx) => (
+                  <div key={idx} className="relative aspect-square rounded-lg overflow-hidden border bg-white flex items-center justify-center group">
+                    <img src={img} alt={`Asset ${idx + 1}`} className="w-full h-full object-contain" />
+                    <button
+                      type="button"
+                      onClick={() => removeImage(idx)}
+                      className="absolute top-0.5 right-0.5 w-5 h-5 bg-red-500 text-white rounded-full text-[10px] font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                      title="Remove image"
+                    >
+                      ✕
+                    </button>
+                    {idx === 0 && (
+                      <span className="absolute bottom-0 left-0 right-0 bg-blue-600/90 text-white text-[7px] font-bold text-center py-0.5 uppercase">
+                        Primary
+                      </span>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
+
+            {/* Video upload */}
+            <div className="space-y-1.5 pt-1">
+              <label className="block text-[10px] font-black uppercase text-gray-400 tracking-wider">
+                Product Video (optional)
+              </label>
+              <div className="flex gap-2 items-end">
+                <div className="flex-1">
+                  <Input
+                    value={videoUrl && !videoUrl.startsWith('data:') ? videoUrl : ''}
+                    onChange={(e) => setVideoUrl(e.target.value)}
+                    placeholder="https://example.com/video.mp4 or upload"
+                  />
+                </div>
+                <input
+                  ref={videoInputRef}
+                  type="file"
+                  accept="video/*"
+                  onChange={handleVideoUpload}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => videoInputRef.current?.click()}
+                  title="Upload video from device"
+                  className="flex-shrink-0 w-10 h-10 mb-0.5 flex items-center justify-center rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-700 hover:border-purple-500 hover:bg-purple-50 dark:hover:bg-purple-950/30 text-gray-400 hover:text-purple-500 transition-all cursor-pointer"
+                >
+                  <MonitorPlay size={18} />
+                </button>
+              </div>
+              {videoUrl && (
+                <div className="p-3 bg-gray-50 dark:bg-gray-950 rounded-xl border border-gray-150 dark:border-gray-850 flex items-center gap-3">
+                  <div className="w-16 h-12 rounded-lg overflow-hidden border bg-gray-900 flex-shrink-0 flex items-center justify-center">
+                    <Play size={16} className="text-white" />
+                  </div>
+                  <div className="space-y-0.5 truncate flex-1 text-[10px]">
+                    <span className="text-gray-400 block font-bold uppercase tracking-wider">Video Attached</span>
+                    <p className="text-gray-650 dark:text-gray-300 font-mono truncate">{videoUrl.startsWith('data:') ? 'Uploaded video file' : videoUrl}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setVideoUrl("")}
+                    className="text-red-400 hover:text-red-600 text-[10px] font-bold cursor-pointer"
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="flex justify-end pt-4">
